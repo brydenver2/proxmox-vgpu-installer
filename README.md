@@ -67,10 +67,46 @@ Changes in version 1.2
 - Added checks for multiple GPU's
 - Added MD5 checksums on downloaded files
 - Created database to check for PCI ID's to determine if a GPU is natively supported
-- If multiple GPU's are detected, all vGPU-capable GPUs can be used simultaneously for vGPU. Only non-vGPU capable or explicitly excluded GPUs are configured for passthrough using UDEV rules
+- **NVIDIA vGPU 16.0 Compliant Multi-GPU Support**: All vGPU-capable GPUs can be used simultaneously for vGPU with proper compatibility validation:
+  - Driver compatibility validation across all selected GPUs
+  - Mixed GPU architecture warnings and compatibility checks
+  - Conservative single-GPU mode recommended for first-time setups
+  - Advanced multi-GPU mode with comprehensive validation
+  - Proper licensing guidance for multi-GPU deployments
+- Only non-vGPU capable or explicitly excluded GPUs are configured for passthrough using UDEV rules
 - Always write config.txt to script directory
 - Use Docker for hosting FastAPI-DLS (licensing) or using this docker [fastapi-dls](https://github.com/GreenDamTan/fastapi-dls_mirror) container on any host or capable server
 - Create Powershell (ps1) and Bash (sh) files to retrieve licenses from FastAPI-DLS
+
+## Multi-GPU vGPU Configuration
+
+### NVIDIA vGPU 16.0 Compliance Features
+
+The installer now provides **NVIDIA vGPU 16.0 compliant multi-GPU support** with the following features:
+
+#### Driver Compatibility Validation
+- Automatically validates that all selected GPUs are compatible with the same driver version
+- Prevents mixed driver version deployments that violate NVIDIA requirements
+- Provides clear warnings when driver incompatibilities are detected
+
+#### GPU Selection Modes
+1. **Single GPU Mode (Recommended)**: Conservative approach for first-time setups
+2. **Multi-GPU Mode (Advanced)**: Allows selecting multiple compatible GPUs
+3. **All GPU Mode (Expert)**: Uses all available vGPU-capable cards with validation
+
+#### Architecture Compatibility Checks
+- Warns users about potential issues when mixing different GPU architectures
+- Provides detailed compatibility information during selection
+- Ensures optimal vGPU performance and stability
+
+#### Licensing Compliance
+- Clear guidance on licensing requirements for multi-GPU deployments
+- Each vGPU-enabled GPU requires proper NVIDIA vGPU licensing
+- FastAPI-DLS configuration with multi-GPU considerations
+
+#### System Resource Validation
+- Warnings about power and cooling requirements for multi-GPU setups
+- Ensures users understand system requirements before deployment
 
 ## 🚀 Contributing
 All Credit belong to wvthoog for creating the V1.1 script
