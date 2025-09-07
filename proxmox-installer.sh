@@ -1246,6 +1246,7 @@ case $STEP in
                 if [[ "$driver_ver" =~ ^16\. ]]; then
                     echo -e "${YELLOW}[-]${NC} Driver version $driver_ver (535.x series) requires kernel 6.5 for stability"
                     echo -e "${YELLOW}[-]${NC} Applying kernel pinning to prevent compatibility issues..."
+                    echo -e "${YELLOW}[-]${NC} Consider upgrading to v17.x or v18.x drivers for modern kernel support"
                     
                     # Kernel version comparison function
                     kernel_version_compare() {

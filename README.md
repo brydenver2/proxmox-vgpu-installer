@@ -15,6 +15,7 @@ For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-
 - Newer kernels introduce breaking changes in kernel driver interfaces that cause compilation failures
 - NVIDIA has not backported compatibility fixes for these older driver versions
 - **Automatic kernel pinning**: The script automatically detects v16.x driver selection and pins kernel to 6.5.x
+- **Pascal GPU Support**: v16.9 (535.230.02) is recommended for Pascal architecture and older GPUs
 
 ### v17.x Drivers (550.x series) - Flexible Kernel Support  
 - v17.x drivers (550.54.10 to 550.163.02) support kernel 6.5.x and newer versions
