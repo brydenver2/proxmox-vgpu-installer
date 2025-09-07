@@ -745,9 +745,13 @@ case $STEP in
                         fi
                         
                         for card_info in "${vgpu_capable_cards[@]}"; do
+                            card_index=$(echo "$card_info" | cut -d ':' -f 1)
                             selected_pci_id=$(echo "$card_info" | cut -d ':' -f 2)
+                            description=$(echo "$card_info" | cut -d ':' -f 3)
                             selected_vgpu_cards+=("$selected_pci_id")
+                            echo -e "${GREEN}[*]${NC} Selected GPU $card_index: $description for vGPU"
                         done
+                        echo -e "${GREEN}[*]${NC} All ${#selected_vgpu_cards[@]} vGPU-capable GPUs selected"
                         
                     else
                         # Use selected cards with validation
