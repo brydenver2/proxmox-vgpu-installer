@@ -1237,16 +1237,16 @@ case $STEP in
             map_filename_to_version "$driver_filename"
             
             # Apply selective kernel pinning based on driver version
-            # v16.x drivers (535.x series) require kernel 6.5 due to compatibility issues with newer kernels
-            # v17.x and v18.x drivers support newer kernels and don't require pinning
+            # Early v16.x drivers (v16.0-v16.7) require kernel 6.5 due to compatibility issues
+            # v16.8+ and v17.x/v18.x drivers support newer kernels and don't require pinning
             apply_kernel_pinning() {
                 local driver_ver="$1"
                 
-                # Check if driver version starts with "16" (v16.x drivers)
-                if [[ "$driver_ver" =~ ^16\. ]]; then
-                    echo -e "${YELLOW}[-]${NC} Driver version $driver_ver (535.x series) requires kernel 6.5 for stability"
+                # Check if driver version is v16.0 to v16.7 (requires kernel pinning)
+                if [[ "$driver_ver" =~ ^16\.[0-7]$ ]]; then
+                    echo -e "${YELLOW}[-]${NC} Driver version $driver_ver (535.x early series) requires kernel 6.5 for stability"
                     echo -e "${YELLOW}[-]${NC} Applying kernel pinning to prevent compatibility issues..."
-                    echo -e "${YELLOW}[-]${NC} Consider upgrading to v17.x or v18.x drivers for modern kernel support"
+                    echo -e "${YELLOW}[-]${NC} Consider upgrading to v16.8+ for modern kernel support"
                     
                     # Kernel version comparison function
                     kernel_version_compare() {
@@ -1272,12 +1272,16 @@ case $STEP in
                         done <<< "$kernel_list"
                         
                         # Pin the highest 6.5 kernel
-                        run_command "Pinning kernel to $highest_version (required for v16.x drivers)" "info" "proxmox-boot-tool kernel pin $highest_version"
+                        run_command "Pinning kernel to $highest_version (required for early v16.x drivers)" "info" "proxmox-boot-tool kernel pin $highest_version"
                         echo -e "${GREEN}[+]${NC} Kernel successfully pinned to $highest_version"
                     else
-                        echo -e "${RED}[!]${NC} No 6.5 kernels found. v16.x drivers may not work with newer kernels."
-                        echo -e "${YELLOW}[-]${NC} Consider installing proxmox-kernel-6.5 package."
+                        echo -e "${RED}[!]${NC} No 6.5 kernels found. Early v16.x drivers may not work with newer kernels."
+                        echo -e "${YELLOW}[-]${NC} Consider installing proxmox-kernel-6.5 package or upgrading to v16.8+."
                     fi
+                elif [[ "$driver_ver" =~ ^16\.[89]$ ]]; then
+                    echo -e "${GREEN}[+]${NC} Driver version $driver_ver supports modern kernels (Ubuntu 24.04+ compatible)"
+                    echo -e "${YELLOW}[-]${NC} No kernel pinning required - can use latest available kernel"
+                    echo -e "${YELLOW}[-]${NC} NVIDIA official documentation confirms v16.8+ Ubuntu 24.04 support"
                 else
                     echo -e "${GREEN}[+]${NC} Driver version $driver_ver (550.x/570.x series) supports flexible kernel versions"
                     echo -e "${YELLOW}[-]${NC} No kernel pinning required - can use latest available kernel"

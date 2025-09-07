@@ -8,13 +8,18 @@ For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-
 
 ## Kernel Compatibility Requirements
 
-### v16.x Drivers (535.x series) - Kernel 6.5 Required
-**Why v16 drivers need kernel pinning to 6.5:**
-- v16.x drivers (535.54.06 to 535.230.02) were developed and tested against kernel 6.5.x
+### v16.x Drivers (535.x series) - Mixed Kernel Compatibility
+**Kernel compatibility varies by v16.x version:**
+
+#### Early v16.x Versions (v16.0-v16.7) - Kernel 6.5 Required
+- v16.0 to v16.7 drivers (535.54.06 to 535.183.04) were developed and tested against kernel 6.5.x
 - These drivers contain DKMS modules that are not compatible with newer kernel APIs (6.6+, 6.8+)
-- Newer kernels introduce breaking changes in kernel driver interfaces that cause compilation failures
-- NVIDIA has not backported compatibility fixes for these older driver versions
-- **Automatic kernel pinning**: The script automatically detects v16.x driver selection and pins kernel to 6.5.x
+- **Automatic kernel pinning**: The script automatically detects these versions and pins kernel to 6.5.x
+
+#### Later v16.x Versions (v16.8+) - Modern Kernel Support
+- **v16.8** (535.216.01) and **v16.9** (535.230.02) include updated compatibility for newer kernels
+- According to NVIDIA official documentation, **v16.8+ supports Ubuntu 24.04** (kernel 6.8+)
+- **No kernel pinning required**: These versions can use modern kernel versions
 - **Pascal GPU Support**: v16.9 (535.230.02) is recommended for Pascal architecture and older GPUs
 
 ### v17.x Drivers (550.x series) - Flexible Kernel Support  
@@ -31,8 +36,11 @@ For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-
 The script automatically:
 1. Installs `proxmox-kernel-6.5` and `proxmox-headers-6.5` packages for compatibility
 2. Analyzes your selected driver version during step 2
-3. Applies selective kernel pinning only for v16.x drivers using `proxmox-boot-tool kernel pin`
-4. Allows v17.x and v18.x drivers to use any available kernel version
+3. Applies selective kernel pinning:
+   - **v16.0-v16.7**: Pins kernel to 6.5.x for compatibility 
+   - **v16.8-v16.9**: Allows modern kernels (supports Ubuntu 24.04+)
+   - **v17.x and v18.x**: Allows any available kernel version
+4. Uses `proxmox-boot-tool kernel pin` only when required
 
 For more information, see the [NVIDIA vGPU documentation](https://docs.nvidia.com/grid/) and kernel compatibility matrices.
 ## Changes
