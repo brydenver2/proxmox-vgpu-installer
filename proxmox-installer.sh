@@ -431,39 +431,19 @@ case $STEP in
             fi          
 
             # APT installing packages
-            # Downgrade kernel and headers for Nvidia drivers to install successfully
-            # apt install proxmox-kernel-6.5 proxmox-headers-6.5
-            # used to be pve-headers, but that will use latest version (which is currently 6.8)
+            # NVIDIA vGPU Driver Kernel Compatibility Requirements:
+            # - v16.x drivers (535.x series): Only tested and certified with kernel 6.5.x
+            #   These older drivers may fail to compile with newer kernels due to API changes
+            # - v17.x drivers (550.x series): Support kernel 6.5.x and newer (6.6, 6.7, 6.8)
+            # - v18.x drivers (570.x series): Support kernel 6.5.x and newer
+            # 
+            # Installing kernel 6.5 to ensure compatibility with v16.x drivers if needed
+            # Note: proxmox-headers-6.5 used instead of pve-headers which pulls latest (6.8+)
             run_command "Installing packages" "info" "apt install -y git build-essential dkms proxmox-kernel-6.5 proxmox-headers-6.5 mdevctl megatools"
 
-            # Pinning the kernel
-            kernel_version_compare() {
-                ver1=$1
-                ver2=$2
-                printf '%s\n' "$ver1" "$ver2" | sort -V -r | head -n 1
-            }
-
-            # Get the kernel list and filter for 6.5 kernels
-            kernel_list=$(proxmox-boot-tool kernel list | grep "6.5")
-
-            # Check if any 6.5 kernels are available
-            if [[ -n "$kernel_list" ]]; then
-                # Extract the highest version
-                highest_version=""
-                while read -r line; do
-                    kernel_version=$(echo "$line" | awk '{print $1}')
-                    if [[ -z "$highest_version" ]]; then
-                        highest_version="$kernel_version"
-                    else
-                        highest_version=$(kernel_version_compare "$highest_version" "$kernel_version")
-                    fi
-                done <<< "$kernel_list"
-
-                # Pin the highest 6.5 kernel
-                run_command "Pinning kernel: $highest_version" "info" "proxmox-boot-tool kernel pin $highest_version"
-            else
-                echo -e "${RED}[!]${NC} No 6.5 kernels installed."
-            fi
+            echo -e "${YELLOW}[-]${NC} Kernel 6.5 installed. Kernel pinning will be determined based on selected driver version."
+            echo -e "${YELLOW}[-]${NC} v16.x drivers (535.x series) require kernel 6.5 for stability"
+            echo -e "${YELLOW}[-]${NC} v17.x and v18.x drivers can use newer kernels"
 
             # Running NVIDIA GPU checks
             query_gpu_info() {
@@ -1255,6 +1235,56 @@ case $STEP in
 
             # Set the driver version based on the filename
             map_filename_to_version "$driver_filename"
+            
+            # Apply selective kernel pinning based on driver version
+            # v16.x drivers (535.x series) require kernel 6.5 due to compatibility issues with newer kernels
+            # v17.x and v18.x drivers support newer kernels and don't require pinning
+            apply_kernel_pinning() {
+                local driver_ver="$1"
+                
+                # Check if driver version starts with "16" (v16.x drivers)
+                if [[ "$driver_ver" =~ ^16\. ]]; then
+                    echo -e "${YELLOW}[-]${NC} Driver version $driver_ver (535.x series) requires kernel 6.5 for stability"
+                    echo -e "${YELLOW}[-]${NC} Applying kernel pinning to prevent compatibility issues..."
+                    
+                    # Kernel version comparison function
+                    kernel_version_compare() {
+                        ver1=$1
+                        ver2=$2
+                        printf '%s\n' "$ver1" "$ver2" | sort -V -r | head -n 1
+                    }
+                    
+                    # Get the kernel list and filter for 6.5 kernels
+                    kernel_list=$(proxmox-boot-tool kernel list | grep "6.5")
+                    
+                    # Check if any 6.5 kernels are available
+                    if [[ -n "$kernel_list" ]]; then
+                        # Extract the highest 6.5 kernel version
+                        highest_version=""
+                        while read -r line; do
+                            kernel_version=$(echo "$line" | awk '{print $1}')
+                            if [[ -z "$highest_version" ]]; then
+                                highest_version="$kernel_version"
+                            else
+                                highest_version=$(kernel_version_compare "$highest_version" "$kernel_version")
+                            fi
+                        done <<< "$kernel_list"
+                        
+                        # Pin the highest 6.5 kernel
+                        run_command "Pinning kernel to $highest_version (required for v16.x drivers)" "info" "proxmox-boot-tool kernel pin $highest_version"
+                        echo -e "${GREEN}[+]${NC} Kernel successfully pinned to $highest_version"
+                    else
+                        echo -e "${RED}[!]${NC} No 6.5 kernels found. v16.x drivers may not work with newer kernels."
+                        echo -e "${YELLOW}[-]${NC} Consider installing proxmox-kernel-6.5 package."
+                    fi
+                else
+                    echo -e "${GREEN}[+]${NC} Driver version $driver_ver (550.x/570.x series) supports flexible kernel versions"
+                    echo -e "${YELLOW}[-]${NC} No kernel pinning required - can use latest available kernel"
+                fi
+            }
+            
+            # Apply kernel pinning based on selected driver version
+            apply_kernel_pinning "$driver_version"
             
             # Set the driver URL if not provided
             if [ -z "$URL" ]; then
