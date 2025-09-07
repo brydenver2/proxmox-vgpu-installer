@@ -5,6 +5,44 @@ For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-
 ## WARNING !!!
 - fastapi-dls is not working correctly with v18.x but working fine on v17.x, please consider this for extended use
 - 17.6 & 18.1 is download only and only for natively support vGPU, lookup on NVIDIA for supported GPU ([v18.x](https://docs.nvidia.com/vgpu/18.0/product-support-matrix/index.html) & [v17.x](https://docs.nvidia.com/vgpu/17.0/product-support-matrix/index.html))
+
+## Kernel Compatibility Requirements
+
+### v16.x Drivers (535.x series) - Mixed Kernel Compatibility
+**Kernel compatibility varies by v16.x version:**
+
+#### Early v16.x Versions (v16.0-v16.7) - Kernel 6.5 Required
+- v16.0 to v16.7 drivers (535.54.06 to 535.183.04) were developed and tested against kernel 6.5.x
+- These drivers contain DKMS modules that are not compatible with newer kernel APIs (6.6+, 6.8+)
+- **Automatic kernel pinning**: The script automatically detects these versions and pins kernel to 6.5.x
+
+#### Later v16.x Versions (v16.8+) - Modern Kernel Support
+- **v16.8** (535.216.01) and **v16.9** (535.230.02) include updated compatibility for newer kernels
+- According to NVIDIA official documentation, **v16.8+ supports Ubuntu 24.04** (kernel 6.8+)
+- **No kernel pinning required**: These versions can use modern kernel versions
+- **Pascal GPU Support**: v16.9 (535.230.02) is recommended for Pascal architecture and older GPUs
+
+### v17.x Drivers (550.x series) - Flexible Kernel Support  
+- v17.x drivers (550.54.10 to 550.163.02) support kernel 6.5.x and newer versions
+- These drivers include updated DKMS modules compatible with modern kernel APIs
+- **No kernel pinning required**: Script allows using latest available kernel
+
+### v18.x Drivers (570.x series) - Latest Kernel Support
+- v18.x drivers (570.124.03 to 570.133.10) support latest kernels including 6.8+
+- Most recent driver architecture with full modern kernel compatibility
+- **No kernel pinning required**: Script allows using latest available kernel
+
+### Technical Details
+The script automatically:
+1. Installs `proxmox-kernel-6.5` and `proxmox-headers-6.5` packages for compatibility
+2. Analyzes your selected driver version during step 2
+3. Applies selective kernel pinning:
+   - **v16.0-v16.7**: Pins kernel to 6.5.x for compatibility 
+   - **v16.8-v16.9**: Allows modern kernels (supports Ubuntu 24.04+)
+   - **v17.x and v18.x**: Allows any available kernel version
+4. Uses `proxmox-boot-tool kernel pin` only when required
+
+For more information, see the [NVIDIA vGPU documentation](https://docs.nvidia.com/grid/) and kernel compatibility matrices.
 ## Changes
 Changes in version 1.2
 ### Added driver versions 16
