@@ -593,61 +593,173 @@ case $STEP in
 
                 echo ""
 
-                # Prompt the user to select a GPU
-                echo -e "${BLUE}[?]${NC} Select the GPU you want to enable vGPU for. All other GPUs will be passed through."
-                read -p "$(echo -e "${BLUE}[?]${NC} Enter the corresponding number: ")" selected_index
-                echo ""
-
-                # Validate user input
-                if [[ ! "$selected_index" =~ ^[1-$index]$ ]]; then
-                    echo -e "${RED}[!]${NC} Invalid input. Please enter a number between 1 and $((index-1))."
-                    exit 1
-                fi
-
-                # Get the PCI ID of the selected GPU
+                # Identify vGPU-capable GPUs and allow multiple selections
+                declare -a vgpu_capable_cards
+                declare -a selected_vgpu_cards
+                declare -a passthrough_cards
+                
+                # Collect vGPU-capable GPUs
                 index=1
                 for pci_id in "${!gpu_pci_groups[@]}"; do
-                    if [[ $index -eq $selected_index ]]; then
-                        selected_pci_id=$pci_id
-                        break
+                    gpu_device_id=${gpu_pci_groups[$pci_id]}
+                    query_result=$(query_gpu_info "$gpu_device_id")
+                    
+                    if [[ -n "$query_result" ]]; then
+                        vgpu=$(echo "$query_result" | cut -d '|' -f 4)
+                        description=$(echo "$query_result" | cut -d '|' -f 3)
+                        
+                        if [[ "$vgpu" == "Yes" ]] || [[ "$vgpu" == "Native" ]]; then
+                            vgpu_capable_cards+=("$index:$pci_id:$description:$vgpu")
+                        else
+                            # Non-vGPU capable cards go straight to passthrough candidates
+                            passthrough_cards+=("$index:$pci_id:$description")
+                        fi
+                    else
+                        # Unknown cards go to passthrough candidates
+                        passthrough_cards+=("$index:$pci_id:Unknown GPU")
                     fi
                     ((index++))
                 done
 
-                gpu_device_id=${gpu_pci_groups[$selected_pci_id]}
-                query_result=$(query_gpu_info "$gpu_device_id")
-
-                if [[ -n "$query_result" ]]; then
-                    description=$(echo "$query_result" | cut -d '|' -f 3)
-                    echo -e "${GREEN}[*]${NC} You selected GPU: $description with Device ID: $gpu_device_id on PCI bus 0000:$selected_pci_id"
+                # Handle vGPU-capable GPUs
+                if [[ ${#vgpu_capable_cards[@]} -eq 0 ]]; then
+                    echo -e "${RED}[!]${NC} No vGPU-capable cards found in your system"
+                    echo "Exiting script."
+                    exit 1
+                elif [[ ${#vgpu_capable_cards[@]} -eq 1 ]]; then
+                    # Single vGPU-capable card - automatically select it
+                    card_info="${vgpu_capable_cards[0]}"
+                    card_index=$(echo "$card_info" | cut -d ':' -f 1)
+                    selected_pci_id=$(echo "$card_info" | cut -d ':' -f 2)
+                    description=$(echo "$card_info" | cut -d ':' -f 3)
+                    vgpu_type=$(echo "$card_info" | cut -d ':' -f 4)
+                    
+                    echo -e "${GREEN}[*]${NC} Using GPU $card_index: $description ($vgpu_type vGPU support) for vGPU"
+                    selected_vgpu_cards+=("$selected_pci_id")
+                    
+                    # Set driver version from the selected card
+                    gpu_device_id=${gpu_pci_groups[$selected_pci_id]}
+                    query_result=$(query_gpu_info "$gpu_device_id")
+                    driver=$(echo "$query_result" | cut -d '|' -f 5 | tr ';' ',')
                     DRIVER_VERSION=$driver
                 else
-                    echo -e "${RED}[!]${NC} GPU Device ID: $gpu_device_id not found in the database."
-                fi
-
-                # Add all PCI bus IDs to a UDEV rule that were not selected
-                echo ""
-                read -p "$(echo -e "${BLUE}[?]${NC} Do you want me to enable pass through for all other GPU devices? (y/n): ")" enable_pass_through
-                echo ""
-                if [[ "$enable_pass_through" == "y" ]]; then
-                    echo -e "${YELLOW}[-]${NC} Enabling passthrough for devices:"
+                    # Multiple vGPU-capable cards - let user choose
+                    echo -e "${GREEN}[*]${NC} Found ${#vgpu_capable_cards[@]} vGPU-capable GPUs. You can enable vGPU on multiple cards simultaneously:"
                     echo ""
-                    for pci_id in "${!gpu_pci_groups[@]}"; do
-                        if [[ "$pci_id" != "$selected_pci_id" ]]; then
-                            if [ ! -z "$(ls -A /sys/class/iommu)" ]; then
-                                for iommu_dev in $(ls /sys/bus/pci/devices/0000:$pci_id/iommu_group/devices) ; do
-                                    echo "PCI ID: $iommu_dev"
-                                    echo "ACTION==\"add\", SUBSYSTEM==\"pci\", KERNELS==\"$iommu_dev\", DRIVERS==\"*\", ATTR{driver_override}=\"vfio-pci\"" >> /etc/udev/rules.d/90-vfio-pci.rules
-                                done
-                            fi
-                        fi
+                    for card_info in "${vgpu_capable_cards[@]}"; do
+                        card_index=$(echo "$card_info" | cut -d ':' -f 1)
+                        description=$(echo "$card_info" | cut -d ':' -f 3)
+                        vgpu_type=$(echo "$card_info" | cut -d ':' -f 4)
+                        echo "  $card_index: $description ($vgpu_type vGPU support)"
                     done
                     echo ""
-                elif [[ "$enable_pass_through" == "n" ]]; then
-                    echo -e "${YELLOW}[-]${NC} Add these lines by yourself, and execute a modprobe vfio-pci afterwards or reboot the server at the end of the script"
+                    echo -e "${BLUE}[?]${NC} Select GPUs for vGPU (enter numbers separated by spaces, e.g., '1 3 4'):"
+                    echo -e "${BLUE}[?]${NC} Or press Enter to use ALL vGPU-capable cards:"
+                    read -p "$(echo -e "${BLUE}[?]${NC} Your selection: ")" selected_indexes
                     echo ""
-                else
-                    echo -e "${RED}[!]${NC} Invalid input. Please enter (y/n)."
+
+                    # Process selection
+                    if [[ -z "$selected_indexes" ]]; then
+                        # Use all vGPU-capable cards
+                        echo -e "${GREEN}[*]${NC} Using ALL vGPU-capable cards for vGPU"
+                        for card_info in "${vgpu_capable_cards[@]}"; do
+                            selected_pci_id=$(echo "$card_info" | cut -d ':' -f 2)
+                            selected_vgpu_cards+=("$selected_pci_id")
+                        done
+                    else
+                        # Use selected cards
+                        IFS=' ' read -ra indexes <<< "$selected_indexes"
+                        for idx in "${indexes[@]}"; do
+                            # Validate and find the card
+                            card_found=false
+                            for card_info in "${vgpu_capable_cards[@]}"; do
+                                card_index=$(echo "$card_info" | cut -d ':' -f 1)
+                                if [[ "$card_index" == "$idx" ]]; then
+                                    selected_pci_id=$(echo "$card_info" | cut -d ':' -f 2)
+                                    description=$(echo "$card_info" | cut -d ':' -f 3)
+                                    selected_vgpu_cards+=("$selected_pci_id")
+                                    echo -e "${GREEN}[*]${NC} Selected GPU $idx: $description for vGPU"
+                                    card_found=true
+                                    break
+                                fi
+                            done
+                            if [[ "$card_found" == false ]]; then
+                                echo -e "${RED}[!]${NC} Invalid selection: $idx"
+                                exit 1
+                            fi
+                        done
+                    fi
+
+                    # Set driver version from first selected card (they should be compatible)
+                    if [[ ${#selected_vgpu_cards[@]} -gt 0 ]]; then
+                        gpu_device_id=${gpu_pci_groups[${selected_vgpu_cards[0]}]}
+                        query_result=$(query_gpu_info "$gpu_device_id")
+                        driver=$(echo "$query_result" | cut -d '|' -f 5 | tr ';' ',')
+                        DRIVER_VERSION=$driver
+                    fi
+                fi
+
+                # Handle passthrough for remaining cards
+                remaining_cards=()
+                for pci_id in "${!gpu_pci_groups[@]}"; do
+                    is_selected_vgpu=false
+                    for selected_pci in "${selected_vgpu_cards[@]}"; do
+                        if [[ "$pci_id" == "$selected_pci" ]]; then
+                            is_selected_vgpu=true
+                            break
+                        fi
+                    done
+                    
+                    if [[ "$is_selected_vgpu" == false ]]; then
+                        remaining_cards+=("$pci_id")
+                    fi
+                done
+
+                if [[ ${#remaining_cards[@]} -gt 0 ]]; then
+                    echo ""
+                    echo -e "${YELLOW}[-]${NC} Found ${#remaining_cards[@]} GPU(s) not selected for vGPU:"
+                    for pci_id in "${remaining_cards[@]}"; do
+                        gpu_device_id=${gpu_pci_groups[$pci_id]}
+                        query_result=$(query_gpu_info "$gpu_device_id")
+                        if [[ -n "$query_result" ]]; then
+                            description=$(echo "$query_result" | cut -d '|' -f 3)
+                            vgpu=$(echo "$query_result" | cut -d '|' -f 4)
+                            echo "  - $description on PCI $pci_id ($vgpu vGPU capability)"
+                        else
+                            echo "  - Unknown GPU on PCI $pci_id"
+                        fi
+                    done
+                    
+                    echo ""
+                    read -p "$(echo -e "${BLUE}[?]${NC} Enable passthrough for these remaining GPU(s)? (y/n): ")" enable_pass_through
+                    echo ""
+                    
+                    if [[ "$enable_pass_through" == "y" ]]; then
+                        echo -e "${YELLOW}[-]${NC} Enabling passthrough for remaining devices:"
+                        echo ""
+                        for pci_id in "${remaining_cards[@]}"; do
+                            if [ ! -z "$(ls -A /sys/class/iommu)" ]; then
+                                iommu_group_path="/sys/bus/pci/devices/0000:$pci_id/iommu_group/devices"
+                                if [ -d "$iommu_group_path" ]; then
+                                    for iommu_dev in "$iommu_group_path"/*; do
+                                        if [ -e "$iommu_dev" ]; then
+                                            iommu_dev_name=$(basename "$iommu_dev")
+                                            echo "PCI ID: $iommu_dev_name"
+                                            echo "ACTION==\"add\", SUBSYSTEM==\"pci\", KERNELS==\"$iommu_dev_name\", DRIVERS==\"*\", ATTR{driver_override}=\"vfio-pci\"" >> /etc/udev/rules.d/90-vfio-pci.rules
+                                        fi
+                                    done
+                                fi
+                            fi
+                        done
+                        echo ""
+                    elif [[ "$enable_pass_through" == "n" ]]; then
+                        echo -e "${YELLOW}[-]${NC} Skipping passthrough configuration for remaining cards"
+                        echo -e "${YELLOW}[-]${NC} You can manually configure them later if needed"
+                        echo ""
+                    else
+                        echo -e "${RED}[!]${NC} Invalid input. Please enter (y/n)."
+                        exit 1
+                    fi
                 fi
             fi
 

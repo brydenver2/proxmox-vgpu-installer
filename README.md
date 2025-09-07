@@ -67,7 +67,7 @@ Changes in version 1.2
 - Added checks for multiple GPU's
 - Added MD5 checksums on downloaded files
 - Created database to check for PCI ID's to determine if a GPU is natively supported
-- If multiple GPU's are detected, pass through the rest using UDEV rules
+- If multiple GPU's are detected, all vGPU-capable GPUs can be used simultaneously for vGPU. Only non-vGPU capable or explicitly excluded GPUs are configured for passthrough using UDEV rules
 - Always write config.txt to script directory
 - Use Docker for hosting FastAPI-DLS (licensing) or using this docker [fastapi-dls](https://github.com/GreenDamTan/fastapi-dls_mirror) container on any host or capable server
 - Create Powershell (ps1) and Bash (sh) files to retrieve licenses from FastAPI-DLS
