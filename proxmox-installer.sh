@@ -445,7 +445,15 @@ case $STEP in
             # 
             # Installing kernel 6.5 to ensure compatibility with v16.x drivers if needed
             # Note: proxmox-headers-6.5 used instead of pve-headers which pulls latest (6.8+)
+            
+            # Get current kernel version for header installation
+            current_kernel=$(uname -r)
+            current_kernel_base=$(echo $current_kernel | cut -d'-' -f1,2)
+            echo -e "${GREEN}[+]${NC} Current running kernel: $current_kernel"
+            
+            # Install both current kernel headers and 6.5 headers for compatibility
             run_command "Installing packages" "info" "apt install -y git build-essential dkms proxmox-kernel-6.5 proxmox-headers-6.5 mdevctl megatools"
+            run_command "Installing headers for current kernel" "info" "apt install -y proxmox-headers-$current_kernel_base || apt install -y pve-headers-$current_kernel"
 
             echo -e "${YELLOW}[-]${NC} Kernel 6.5 installed. Kernel pinning will be determined based on selected driver version."
             echo -e "${YELLOW}[-]${NC} v16.x drivers (535.x series) require kernel 6.5 for stability"
@@ -1636,6 +1644,59 @@ case $STEP in
         # Make driver executable
         chmod +x $driver_filename
 
+        # Verify kernel headers are available for driver compilation
+        verify_kernel_headers() {
+            local current_kernel=$(uname -r)
+            local kernel_build_dir="/lib/modules/$current_kernel/build"
+            local kernel_source_dir="/lib/modules/$current_kernel/source"
+            
+            echo -e "${GREEN}[+]${NC} Verifying kernel headers for running kernel: $current_kernel"
+            
+            # Check if kernel build directory exists
+            if [ ! -d "$kernel_build_dir" ]; then
+                echo -e "${YELLOW}[-]${NC} Kernel build directory not found: $kernel_build_dir"
+                echo -e "${YELLOW}[-]${NC} Attempting to install headers for current kernel..."
+                
+                # Try different header package patterns
+                local kernel_base=$(echo $current_kernel | cut -d'-' -f1,2)
+                if apt install -y "proxmox-headers-$kernel_base" 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} Successfully installed proxmox-headers-$kernel_base"
+                elif apt install -y "pve-headers-$current_kernel" 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} Successfully installed pve-headers-$current_kernel"
+                elif apt install -y pve-headers 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} Successfully installed latest pve-headers"
+                else
+                    echo -e "${RED}[!]${NC} Failed to install kernel headers automatically"
+                    echo -e "${YELLOW}[-]${NC} You may need to install kernel headers manually:"
+                    echo -e "${YELLOW}[-]${NC} apt install proxmox-headers-$kernel_base"
+                    echo -e "${YELLOW}[-]${NC} or apt install pve-headers-$current_kernel"
+                    return 1
+                fi
+            else
+                echo -e "${GREEN}[+]${NC} Kernel build directory found: $kernel_build_dir"
+            fi
+            
+            # Verify the build directory is accessible
+            if [ -d "$kernel_build_dir" ] && [ -r "$kernel_build_dir/Makefile" ]; then
+                echo -e "${GREEN}[+]${NC} Kernel headers verification successful"
+                return 0
+            else
+                echo -e "${RED}[!]${NC} Kernel headers verification failed"
+                echo -e "${YELLOW}[-]${NC} Build directory exists but Makefile not found or not readable"
+                return 1
+            fi
+        }
+        
+        # Verify headers before driver installation
+        if ! verify_kernel_headers; then
+            echo -e "${RED}[!]${NC} Kernel headers verification failed. Driver installation may fail."
+            read -p "$(echo -e "${BLUE}[?]${NC} Continue anyway? (y/n): ")" continue_without_headers
+            if [ "$continue_without_headers" != "y" ]; then
+                echo "Exiting script. Please install proper kernel headers and try again."
+                exit 1
+            fi
+        fi
+
         # Patch and install the driver only if vGPU is not native
         if [ "$VGPU_SUPPORT" = "Yes" ]; then
             # Add custom to original filename
@@ -1649,11 +1710,13 @@ case $STEP in
 
             # Patch and install the driver
             run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch"
-            # Run the patched driver installer
-            run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s"
+            # Run the patched driver installer with explicit kernel source path
+            kernel_source_path="/lib/modules/$(uname -r)/build"
+            run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s --kernel-source-path=$kernel_source_path"
         elif [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Unknown" ]; then
-            # Run the regular driver installer
-            run_command "Installing native driver" "info" "./$driver_filename --dkms -m=kernel -s"
+            # Run the regular driver installer with explicit kernel source path
+            kernel_source_path="/lib/modules/$(uname -r)/build"
+            run_command "Installing native driver" "info" "./$driver_filename --dkms -m=kernel -s --kernel-source-path=$kernel_source_path"
         else
             echo -e "${RED}[!]${NC} Unknown or unsupported GPU: $VGPU_SUPPORT"
             echo ""
