@@ -1714,13 +1714,11 @@ case $STEP in
 
             # Patch and install the driver
             run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch"
-            # Run the patched driver installer with explicit kernel source path
-            kernel_source_path="/lib/modules/$(uname -r)/build"
-            run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s --accept-license --kernel-source-path=$kernel_source_path"
+            # Run the patched driver installer
+            run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s"
         elif [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Unknown" ]; then
-            # Run the regular driver installer with explicit kernel source path
-            kernel_source_path="/lib/modules/$(uname -r)/build"
-            run_command "Installing native driver" "info" "./$driver_filename --dkms -m=kernel -s --accept-license --kernel-source-path=$kernel_source_path"
+            # Run the regular driver installer
+            run_command "Installing native driver" "info" "./$driver_filename --dkms -m=kernel -s"
         else
             echo -e "${RED}[!]${NC} Unknown or unsupported GPU: $VGPU_SUPPORT"
             echo ""
