@@ -1969,6 +1969,10 @@ case $STEP in
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 535.230.02"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.9/NVIDIA-Linux-x86_64-535.230.02-grid.run"
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.9/539.19_grid_win10_win11_server2019_server2022_dch_64bit_international.exe"
+            # Check for Tesla P4 and inform about the fix
+            if detect_tesla_p4; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 detected: vGPU configuration has been fixed to show P4 profiles instead of P40 profiles"
+            fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 535.216.01"
             echo -e "${YELLOW}[-]${NC} Linux: 	https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.8/NVIDIA-Linux-x86_64-535.216.01-grid.run"

@@ -7,6 +7,7 @@ This document explains the Tesla P4 fix that has been integrated into the Proxmo
 Tesla P4 cards have an issue where `nvidia-vgpu-mgr.service` loads incorrect mdevctl types:
 
 - **Driver 16.1 (535.104.06)**: Shows P40 profiles instead of P4 profiles
+- **Driver 16.9 (535.230.02)**: Shows P40 profiles instead of P4 profiles
 - **Driver 17.0 (550.54.10)**: Shows no vGPU profiles at all
 
 ## Solution
@@ -60,6 +61,7 @@ Users with Tesla P4 cards will see additional messages:
 
 The Tesla P4 fix works with:
 - **Driver 16.1 (535.104.06)**: Fixes P40 → P4 profile issue
+- **Driver 16.9 (535.230.02)**: Fixes P40 → P4 profile issue
 - **Driver 17.0 (550.54.10)**: Fixes missing profiles issue
 - **All other drivers**: No impact, fix only applies to Tesla P4 cards
 
