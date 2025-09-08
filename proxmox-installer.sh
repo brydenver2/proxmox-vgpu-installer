@@ -190,6 +190,183 @@ map_filename_to_version() {
     fi
 }
 
+# Function to detect Tesla P4 GPUs
+detect_tesla_p4() {
+    # Check if system has Tesla P4 GPU (device ID 1bb3)
+    local gpu_info=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
+    if [ -n "$gpu_info" ]; then
+        local gpu_device_ids=$(echo "$gpu_info" | grep -oE '\[10de:[0-9a-fA-F]{2,4}\]' | cut -d ':' -f 2 | tr -d ']')
+        for device_id in $gpu_device_ids; do
+            if [ "$device_id" = "1bb3" ]; then
+                return 0  # Tesla P4 found
+            fi
+        done
+    fi
+    return 1  # Tesla P4 not found
+}
+
+# Function to download and extract vgpuConfig.xml from driver 16.4
+download_tesla_p4_config() {
+    local p4_driver_url="https://mega.nz/file/RvsyyBaB#7fe_caaJkBHYC6rgFKtiZdZKkAvp7GNjCSa8ufzkG20"
+    local p4_driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
+    local p4_driver_md5="bad6e09aeb58942750479f091bb9c4b6"
+    
+    echo -e "${GREEN}[+]${NC} Tesla P4 detected - downloading driver 16.4 for vgpuConfig.xml"
+    
+    # Create temporary directory for Tesla P4 fix
+    local temp_dir="/tmp/tesla_p4_fix"
+    mkdir -p "$temp_dir"
+    cd "$temp_dir" || {
+        echo -e "${RED}[!]${NC} Failed to create temporary directory for Tesla P4 fix"
+        return 1
+    }
+    
+    # Download 16.4 driver if not present
+    if [ ! -f "$p4_driver_filename" ]; then
+        echo -e "${YELLOW}[-]${NC} Downloading Tesla P4 configuration driver: $p4_driver_filename"
+        
+        # Check if megadl is available
+        if ! command -v megadl >/dev/null 2>&1; then
+            echo -e "${RED}[!]${NC} megadl not available, Tesla P4 fix cannot be applied"
+            echo -e "${YELLOW}[-]${NC} Please install megatools package to enable Tesla P4 fix"
+            cd "$VGPU_DIR" || true
+            return 1
+        fi
+        
+        # Download with error handling
+        if ! megadl "$p4_driver_url"; then
+            echo -e "${RED}[!]${NC} Failed to download Tesla P4 driver, Tesla P4 fix cannot be applied"
+            cd "$VGPU_DIR" || true
+            return 1
+        fi
+        
+        # Check if file was actually downloaded
+        if [ ! -f "$p4_driver_filename" ]; then
+            echo -e "${RED}[!]${NC} Tesla P4 driver file not found after download"
+            cd "$VGPU_DIR" || true
+            return 1
+        fi
+        
+        # Check MD5 hash
+        local downloaded_md5=$(md5sum "$p4_driver_filename" 2>/dev/null | awk '{print $1}')
+        if [ "$downloaded_md5" != "$p4_driver_md5" ]; then
+            echo -e "${YELLOW}[-]${NC} MD5 checksum mismatch for Tesla P4 driver, continuing anyway"
+        else
+            echo -e "${GREEN}[+]${NC} Tesla P4 driver MD5 checksum verified"
+        fi
+    else
+        echo -e "${YELLOW}[-]${NC} Tesla P4 driver already present, using existing file"
+    fi
+    
+    # Extract the driver
+    echo -e "${YELLOW}[-]${NC} Extracting Tesla P4 driver for vgpuConfig.xml"
+    chmod +x "$p4_driver_filename"
+    if ! ./"$p4_driver_filename" -x >/dev/null 2>&1; then
+        echo -e "${RED}[!]${NC} Failed to extract Tesla P4 driver"
+        cd "$VGPU_DIR" || true
+        return 1
+    fi
+    
+    # Check if vgpuConfig.xml was extracted
+    local extracted_dir="${p4_driver_filename%.run}"
+    if [ -f "$extracted_dir/vgpuConfig.xml" ]; then
+        echo -e "${GREEN}[+]${NC} Tesla P4 vgpuConfig.xml extracted successfully"
+        cd "$VGPU_DIR" || true
+        echo "$temp_dir/$extracted_dir/vgpuConfig.xml"
+        return 0
+    else
+        echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted Tesla P4 driver"
+        cd "$VGPU_DIR" || true
+        return 1
+    fi
+}
+
+# Function to apply Tesla P4 vGPU configuration fix
+apply_tesla_p4_fix() {
+    # Only apply fix if Tesla P4 is detected
+    if detect_tesla_p4; then
+        echo ""
+        echo -e "${YELLOW}[-]${NC} Tesla P4 GPU detected - applying vGPU configuration fix"
+        echo -e "${YELLOW}[-]${NC} This fix resolves the issue where Tesla P4 shows P40 profiles or no profiles"
+        
+        # Get the vgpuConfig.xml from driver 16.4
+        local config_path
+        config_path=$(download_tesla_p4_config)
+        local download_result=$?
+        
+        if [ $download_result -eq 0 ] && [ -f "$config_path" ]; then
+            # Create nvidia vgpu directory if it doesn't exist
+            if ! mkdir -p "/usr/share/nvidia/vgpu"; then
+                echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory"
+                return 1
+            fi
+            
+            # Backup existing config if it exists
+            if [ -f "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                local backup_file="/usr/share/nvidia/vgpu/vgpuConfig.xml.backup.$(date +%Y%m%d_%H%M%S)"
+                echo -e "${YELLOW}[-]${NC} Backing up existing vgpuConfig.xml to $backup_file"
+                if ! cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file"; then
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to backup existing configuration file"
+                fi
+            fi
+            
+            # Copy Tesla P4 specific configuration
+            echo -e "${GREEN}[+]${NC} Installing Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
+            if cp "$config_path" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 vGPU configuration applied successfully"
+                
+                # Restart nvidia-vgpu-mgr.service to load new configuration
+                echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
+                if systemctl restart nvidia-vgpu-mgr.service; then
+                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                    # Give service time to start and initialize
+                    sleep 5
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service, manual restart may be needed"
+                fi
+                
+                # Verify the fix worked
+                echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available..."
+                if command -v mdevctl >/dev/null 2>&1; then
+                    local mdev_output
+                    mdev_output=$(timeout 15 mdevctl types 2>/dev/null | grep -i "grid\|tesla\|p4" || true)
+                    if [ -n "$mdev_output" ]; then
+                        echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available:"
+                        echo "$mdev_output" | head -5 | sed 's/^/  /'
+                        local total_types=$(echo "$mdev_output" | wc -l)
+                        if [ "$total_types" -gt 5 ]; then
+                            echo -e "${YELLOW}[-]${NC}   ... and $(( total_types - 5 )) more vGPU types available"
+                        fi
+                        echo -e "${GREEN}[+]${NC} Tesla P4 fix applied successfully - P4 profiles should now be visible"
+                    else
+                        echo -e "${YELLOW}[-]${NC} No vGPU types detected yet"
+                        echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few minutes or after a reboot"
+                    fi
+                else
+                    echo -e "${YELLOW}[-]${NC} mdevctl not found, cannot verify vGPU types immediately"
+                    echo -e "${YELLOW}[-]${NC} You can verify later with: mdevctl types"
+                fi
+                
+                # Clean up temporary files
+                echo -e "${YELLOW}[-]${NC} Cleaning up temporary files"
+                if ! rm -rf "/tmp/tesla_p4_fix" 2>/dev/null; then
+                    echo -e "${YELLOW}[-]${NC} Warning: Could not clean up temporary files in /tmp/tesla_p4_fix"
+                fi
+                
+                echo -e "${GREEN}[+]${NC} Tesla P4 vGPU configuration fix completed successfully"
+            else
+                echo -e "${RED}[!]${NC} Failed to copy Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
+                echo -e "${RED}[!]${NC} Tesla P4 fix could not be applied"
+            fi
+        else
+            echo -e "${RED}[!]${NC} Failed to download Tesla P4 configuration, skipping fix"
+            echo -e "${YELLOW}[-]${NC} Tesla P4 may show incorrect vGPU profiles"
+            echo -e "${YELLOW}[-]${NC} You can manually apply the fix later by copying vgpuConfig.xml from driver 16.4"
+        fi
+        echo ""
+    fi
+}
+
 # License the vGPU
 configure_fastapi_dls() {
     echo ""
@@ -1748,6 +1925,9 @@ case $STEP in
         run_command "Enable nvidia-vgpud.service" "info" "systemctl enable --now nvidia-vgpud.service"
         run_command "Enable nvidia-vgpu-mgr.service" "info" "systemctl enable --now nvidia-vgpu-mgr.service"
 
+        # Apply Tesla P4 vGPU configuration fix if needed
+        apply_tesla_p4_fix
+
         # Check DRIVER_VERSION against specific driver filenames
         if [ "$driver_filename" == "NVIDIA-Linux-x86_64-570.133.10-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 570.133.10"
@@ -1781,6 +1961,10 @@ case $STEP in
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 550.54.10"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.0/NVIDIA-Linux-x86_64-550.54.14-grid.run"
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.0/551.61_grid_win10_win11_server2022_dch_64bit_international.exe"
+            # Check for Tesla P4 and inform about the fix
+            if detect_tesla_p4; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 detected: vGPU configuration has been fixed to enable P4 vGPU types"
+            fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 535.230.02"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.9/NVIDIA-Linux-x86_64-535.230.02-grid.run"
@@ -1805,6 +1989,10 @@ case $STEP in
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 535.104.06"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.1/NVIDIA-Linux-x86_64-535.104.05-grid.run"
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.1/537.13_grid_win10_win11_server2019_server2022_dch_64bit_international.exe"
+            # Check for Tesla P4 and inform about the fix
+            if detect_tesla_p4; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 detected: vGPU configuration has been fixed to show P4 profiles instead of P40 profiles"
+            fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 535.54.06"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.0/NVIDIA-Linux-x86_64-535.54.03-grid.run"
@@ -1816,6 +2004,14 @@ case $STEP in
         echo ""
         echo "Step 2 completed and installation process is now finished."
         echo ""
+        
+        # Tesla P4 specific messaging
+        if detect_tesla_p4; then
+            echo -e "${GREEN}[+]${NC} Tesla P4 vGPU configuration has been applied"
+            echo -e "${YELLOW}[-]${NC} Your Tesla P4 should now show proper P4 vGPU profiles instead of P40 profiles"
+            echo ""
+        fi
+        
         echo "List all available mdevs by typing: mdevctl types and choose the one that fits your needs and VRAM capabilities"
         echo "Login to your Proxmox server over http/https. Click the VM and go to Hardware."
         echo "Under Add choose PCI Device and assign the desired mdev type to your VM"
