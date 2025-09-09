@@ -12,13 +12,28 @@ Tesla P4 cards have an issue where `nvidia-vgpu-mgr.service` loads incorrect mde
 
 ## Solution
 
-The installer now automatically detects Tesla P4 cards and applies a configuration fix by:
+The installer now automatically detects Tesla P4 cards and applies a robust configuration fix with multiple fallback mechanisms:
 
 1. **Detection**: Automatically detects Tesla P4 GPUs (device ID `1bb3`)
-2. **Download**: Downloads NVIDIA driver 16.4 (535.161.05) to extract the correct `vgpuConfig.xml`
-3. **Application**: Copies the correct configuration to `/usr/share/nvidia/vgpu/vgpuConfig.xml`
-4. **Restart**: Restarts `nvidia-vgpu-mgr.service` to load the new configuration
-5. **Verification**: Verifies that P4 vGPU types are now available via `mdevctl types`
+2. **Network Check**: Verifies internet connectivity before attempting downloads
+3. **Primary Download**: Downloads NVIDIA driver 16.4 (535.161.05) with retry logic
+4. **Fallback Download**: Checks for existing local driver files
+5. **Configuration Fallback**: Uses built-in Tesla P4 config if download fails
+6. **Application**: Copies the correct configuration to `/usr/share/nvidia/vgpu/vgpuConfig.xml`
+7. **Service Restart**: Restarts `nvidia-vgpu-mgr.service` to load the new configuration
+8. **Verification**: Verifies that P4 vGPU types are now available via `mdevctl types`
+
+## Enhanced Error Handling
+
+The fix now includes:
+
+- **Multiple retry attempts** with exponential backoff for downloads
+- **Alternative download methods** when primary method fails
+- **Built-in fallback configuration** when all downloads fail
+- **Comprehensive error reporting** with specific failure reasons
+- **Detailed troubleshooting guide** with actionable next steps
+- **Network connectivity checks** before attempting downloads
+- **Command-line options** for manual troubleshooting
 
 ## How It Works
 
@@ -39,15 +54,23 @@ The Tesla P4 fix is applied automatically during Step 2 of the installation:
 4. Installation completes
 
 ### User Messages
-Users with Tesla P4 cards will see additional messages:
+Users with Tesla P4 cards will see additional messages during installation:
 
+**Successful Installation:**
 ```
 [+] Tesla P4 GPU detected - applying vGPU configuration fix
 [+] Tesla P4 detected - downloading driver 16.4 for vgpuConfig.xml
+[-] Checking network connectivity for Tesla P4 fix...
+[+] Network connectivity verified
+[-] Attempting download using megadl (method 1/3)
+[-] Download attempt 1 of 3...
+[+] Successfully downloaded using megadl
+[+] Tesla P4 driver MD5 checksum verified
 [+] Tesla P4 vgpuConfig.xml extracted successfully
 [+] Installing Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/
 [+] Tesla P4 vGPU configuration applied successfully
 [-] Restarting nvidia-vgpu-mgr.service to load new configuration
+[+] nvidia-vgpu-mgr.service restarted successfully
 [+] Tesla P4 vGPU types are now available:
     nvidia-222 ( 1 of  4GB)
     nvidia-223 ( 2 of  4GB) 
@@ -55,6 +78,55 @@ Users with Tesla P4 cards will see additional messages:
     nvidia-252 ( 1 of  8GB)
     nvidia-253 ( 2 of  8GB)
 [+] Tesla P4 vGPU configuration fix completed successfully
+```
+
+**Download Failed with Fallback:**
+```
+[+] Tesla P4 GPU detected - applying vGPU configuration fix
+[-] This fix resolves the issue where Tesla P4 shows P40 profiles or no profiles
+[!] Failed to download Tesla P4 driver after multiple attempts
+[-] Primary Tesla P4 fix failed, trying fallback configuration...
+[-] Creating fallback Tesla P4 vgpuConfig.xml
+[+] Fallback Tesla P4 vgpuConfig.xml created successfully
+[+] Fallback Tesla P4 vGPU configuration applied successfully
+[+] Tesla P4 vGPU types are now available (using fallback config):
+    nvidia-222 ( 1 of  4GB)
+    nvidia-223 ( 2 of  4GB)
+[-] Note: Using fallback configuration. For optimal performance, manually apply official config later.
+[+] Tesla P4 fallback configuration fix completed
+```
+
+**Complete Failure:**
+```
+[+] Tesla P4 GPU detected - applying vGPU configuration fix
+[-] This fix resolves the issue where Tesla P4 shows P40 profiles or no profiles
+[!] Failed to download Tesla P4 configuration, skipping fix
+[-] Tesla P4 may show incorrect vGPU profiles
+[-] Manual fix instructions:
+[-] 1. Download NVIDIA driver 16.4: NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run
+[-] 2. Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x
+[-] 3. Copy config: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/
+[-] 4. Restart service: systemctl restart nvidia-vgpu-mgr.service
+[-] 5. Verify: mdevctl types | grep -i tesla
+[-] For more details, see: /path/to/TESLA_P4_FIX.md
+[INFO] Tesla P4 Troubleshooting Guide
+======================================
+[Complete troubleshooting guide appears here]
+```
+
+## Command Line Options
+
+The installer now supports Tesla P4-specific command line options:
+
+```bash
+# Show Tesla P4 troubleshooting guide
+./proxmox-installer.sh --tesla-p4-help
+
+# Run only the Tesla P4 fix (for existing installations)
+./proxmox-installer.sh --tesla-p4-fix
+
+# Show all available options
+./proxmox-installer.sh --help
 ```
 
 ## Driver Compatibility
@@ -73,10 +145,16 @@ The Tesla P4 fix works with:
 - **Backup**: Original config backed up with timestamp
 
 ### Error Handling
-- Graceful fallback if download fails
-- Clear error messages if fix cannot be applied
-- No impact on non-Tesla P4 systems
-- Temporary files automatically cleaned up
+The Tesla P4 fix now includes comprehensive error handling:
+
+- **Network Connectivity**: Checks internet connection before attempting downloads
+- **Download Failures**: Multiple retry attempts with different methods
+- **Missing Dependencies**: Clear instructions for installing required packages
+- **File Corruption**: MD5 checksum verification with warnings for mismatches
+- **Extraction Failures**: Timeout handling and disk space checks
+- **Service Failures**: Detailed logging of service restart attempts
+- **Fallback Configuration**: Built-in config when official download fails
+- **Graceful Degradation**: Manual instructions when all automated methods fail
 
 ### Requirements
 - `megatools` package (automatically installed by the main script)
