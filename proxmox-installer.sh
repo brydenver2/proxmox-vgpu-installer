@@ -1593,9 +1593,9 @@ case $STEP in
                     #echo "systemctl daemon-reload"
                     run_command "Systemctl daemon-reload" "info" "systemctl daemon-reload"
                     #echo "enable nvidia-vgpud.service"
-                    run_command "Enable nvidia-vgpud.service" "info" "systemctl enable nvidia-vgpud.service"
+                    run_command "Enable nvidia-vgpud.service" "info" "systemctl enable nvidia-vgpud.service" false
                     #echo "enable nvidia-vgpu-mgr.service"
-                    run_command "Enable nvidia-vgpu-mgr.service" "info" "systemctl enable nvidia-vgpu-mgr.service"
+                    run_command "Enable nvidia-vgpu-mgr.service" "info" "systemctl enable nvidia-vgpu-mgr.service" false
                     update_grub
 
                 elif [ "$VGPU_SUPPORT" = "Native" ]; then
