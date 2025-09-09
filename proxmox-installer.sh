@@ -28,6 +28,21 @@ if [ -f "$VGPU_DIR/$CONFIG_FILE" ]; then
     source "$VGPU_DIR/$CONFIG_FILE"
 fi
 
+# Function to detect Tesla P4 GPUs
+detect_tesla_p4() {
+    # Check if system has Tesla P4 GPU (device ID 1bb3)
+    local gpu_info=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
+    if [ -n "$gpu_info" ]; then
+        local gpu_device_ids=$(echo "$gpu_info" | grep -oE '\[10de:[0-9a-fA-F]{2,4}\]' | cut -d ':' -f 2 | tr -d ']')
+        for device_id in $gpu_device_ids; do
+            if [ "$device_id" = "1bb3" ]; then
+                return 0  # Tesla P4 found
+            fi
+        done
+    fi
+    return 1  # Tesla P4 not found
+}
+
 # Function to display Tesla P4 troubleshooting guide
 show_tesla_p4_troubleshooting() {
     echo ""
@@ -263,21 +278,6 @@ map_filename_to_version() {
     else
         return 1  # Return false
     fi
-}
-
-# Function to detect Tesla P4 GPUs
-detect_tesla_p4() {
-    # Check if system has Tesla P4 GPU (device ID 1bb3)
-    local gpu_info=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
-    if [ -n "$gpu_info" ]; then
-        local gpu_device_ids=$(echo "$gpu_info" | grep -oE '\[10de:[0-9a-fA-F]{2,4}\]' | cut -d ':' -f 2 | tr -d ']')
-        for device_id in $gpu_device_ids; do
-            if [ "$device_id" = "1bb3" ]; then
-                return 0  # Tesla P4 found
-            fi
-        done
-    fi
-    return 1  # Tesla P4 not found
 }
 
 # Function to check network connectivity
