@@ -28,9 +28,81 @@ if [ -f "$VGPU_DIR/$CONFIG_FILE" ]; then
     source "$VGPU_DIR/$CONFIG_FILE"
 fi
 
+# Function to detect Tesla P4 GPUs
+detect_tesla_p4() {
+    # Check if system has Tesla P4 GPU (device ID 1bb3)
+    local gpu_info=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
+    if [ -n "$gpu_info" ]; then
+        local gpu_device_ids=$(echo "$gpu_info" | grep -oE '\[10de:[0-9a-fA-F]{2,4}\]' | cut -d ':' -f 2 | tr -d ']')
+        for device_id in $gpu_device_ids; do
+            if [ "$device_id" = "1bb3" ]; then
+                return 0  # Tesla P4 found
+            fi
+        done
+    fi
+    return 1  # Tesla P4 not found
+}
+
+# Function to display Tesla P4 troubleshooting guide
+show_tesla_p4_troubleshooting() {
+    echo ""
+    echo -e "${BLUE}[INFO]${NC} Tesla P4 Troubleshooting Guide"
+    echo -e "${BLUE}======================================${NC}"
+    echo ""
+    echo -e "${YELLOW}Common Issues and Solutions:${NC}"
+    echo ""
+    echo -e "${YELLOW}1. Tesla P4 shows P40 profiles or no profiles:${NC}"
+    echo -e "   • This is caused by incorrect vgpuConfig.xml"
+    echo -e "   • The fix downloads driver 16.4 which has the correct config"
+    echo -e "   • Solution: Run this installer which applies the fix automatically"
+    echo ""
+    echo -e "${YELLOW}2. Download fails with 'megadl not available':${NC}"
+    echo -e "   • Install megatools: apt install megatools"
+    echo -e "   • Or manually download driver 16.4"
+    echo ""
+    echo -e "${YELLOW}3. Download fails with network errors:${NC}"
+    echo -e "   • Check connectivity: ping -c 3 google.com"
+    echo -e "   • Check firewall settings"
+    echo -e "   • Try downloading from different network"
+    echo ""
+    echo -e "${YELLOW}4. vGPU types still not visible after fix:${NC}"
+    echo -e "   • Wait 2-3 minutes and try: mdevctl types"
+    echo -e "   • Restart service: systemctl restart nvidia-vgpu-mgr.service"
+    echo -e "   • Check service status: systemctl status nvidia-vgpu-mgr.service"
+    echo -e "   • Reboot system if needed"
+    echo ""
+    echo -e "${YELLOW}5. Manual fix steps if automatic fix fails:${NC}"
+    echo -e "   • Download: wget -O NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run [URL]"
+    echo -e "   • Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x"
+    echo -e "   • Copy: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/"
+    echo -e "   • Restart: systemctl restart nvidia-vgpu-mgr.service"
+    echo ""
+    echo -e "${YELLOW}Expected Tesla P4 vGPU Types:${NC}"
+    echo -e "   • nvidia-222 (GRID P4-1Q) - 1GB VRAM, 4 instances"
+    echo -e "   • nvidia-223 (GRID P4-2Q) - 2GB VRAM, 2 instances"
+    echo -e "   • nvidia-224 (GRID P4-4Q) - 4GB VRAM, 1 instance"
+    echo -e "   • nvidia-252 (GRID P4-1A) - 1GB VRAM, VirtualApps"
+    echo -e "   • nvidia-253 (GRID P4-2A) - 2GB VRAM, VirtualApps"
+    echo ""
+    echo -e "${YELLOW}Additional Resources:${NC}"
+    echo -e "   • Documentation: $VGPU_DIR/TESLA_P4_FIX.md"
+    echo -e "   • Forum discussion: https://forum.proxmox.com/threads/vgpu-tesla-p4-wrong-mdevctl-gpu.143247/"
+    echo -e "   • vGPU Unlocking Discord: https://discord.gg/5rQsSV3Byq"
+    echo ""
+}
+
 # Function to display usage information
 display_usage() {
-    echo -e "Usage: $0 [--debug] [--step <step_number>] [--url <url>] [--file <file>]"
+    echo -e "Usage: $0 [--debug] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help]"
+    echo -e ""
+    echo -e "Options:"
+    echo -e "  --debug               Enable debug mode with verbose output"
+    echo -e "  --step <number>       Jump to specific installation step"
+    echo -e "  --url <url>           Use custom driver download URL"
+    echo -e "  --file <file>         Use local driver file"
+    echo -e "  --tesla-p4-fix        Run Tesla P4 vGPU configuration fix only"
+    echo -e "  --tesla-p4-help       Show Tesla P4 troubleshooting guide"
+    echo -e ""
     exit 1
 }
 
@@ -54,6 +126,24 @@ while [[ $# -gt 0 ]]; do
             FILE="$2"
             echo "FILE=$FILE" >> "$VGPU_DIR/$CONFIG_FILE"
             shift 2
+            ;;
+        --tesla-p4-fix)
+            # Run Tesla P4 fix only
+            echo ""
+            echo -e "${BLUE}Tesla P4 vGPU Configuration Fix${NC}"
+            echo -e "${BLUE}================================${NC}"
+            echo ""
+            if detect_tesla_p4; then
+                apply_tesla_p4_fix
+            else
+                echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
+                echo -e "${YELLOW}[-]${NC} This fix is only applicable to systems with Tesla P4 GPUs (device ID 1bb3)"
+            fi
+            exit 0
+            ;;
+        --tesla-p4-help)
+            show_tesla_p4_troubleshooting
+            exit 0
             ;;
         *)
             # Unknown option
@@ -190,19 +280,116 @@ map_filename_to_version() {
     fi
 }
 
-# Function to detect Tesla P4 GPUs
-detect_tesla_p4() {
-    # Check if system has Tesla P4 GPU (device ID 1bb3)
-    local gpu_info=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
-    if [ -n "$gpu_info" ]; then
-        local gpu_device_ids=$(echo "$gpu_info" | grep -oE '\[10de:[0-9a-fA-F]{2,4}\]' | cut -d ':' -f 2 | tr -d ']')
-        for device_id in $gpu_device_ids; do
-            if [ "$device_id" = "1bb3" ]; then
-                return 0  # Tesla P4 found
-            fi
-        done
+# Function to check network connectivity
+check_network_connectivity() {
+    echo -e "${YELLOW}[-]${NC} Checking network connectivity for Tesla P4 fix..."
+    
+    # Test DNS resolution and basic connectivity
+    if ! timeout 10 ping -c 2 8.8.8.8 >/dev/null 2>&1; then
+        echo -e "${YELLOW}[-]${NC} Network connectivity test failed"
+        return 1
     fi
-    return 1  # Tesla P4 not found
+    
+    # Test HTTPS connectivity
+    if ! timeout 10 curl -s -I https://google.com >/dev/null 2>&1; then
+        echo -e "${YELLOW}[-]${NC} HTTPS connectivity test failed"
+        return 1
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Network connectivity verified"
+    return 0
+}
+
+# Function to create a fallback Tesla P4 vgpuConfig.xml
+create_fallback_tesla_p4_config() {
+    local fallback_config_path="/tmp/tesla_p4_fallback_vgpuConfig.xml"
+    
+    echo -e "${YELLOW}[-]${NC} Creating fallback Tesla P4 vgpuConfig.xml"
+    
+    # Create a basic Tesla P4 configuration based on known working config
+    cat > "$fallback_config_path" << 'EOF'
+<?xml version='1.0' encoding='UTF-8'?>
+<vgpu_conf>
+  <pgpu_device id="0x1BB3">
+    <supported_vgpus>
+      <vgpu_type id="222">
+        <name>GRID P4-1Q</name>
+        <class>Quadro</class>
+        <max_resolution>5120x2880</max_resolution>
+        <max_instance>4</max_instance>
+        <num_heads>4</num_heads>
+        <frl_config>60</frl_config>
+        <framebuffer>1073741824</framebuffer>
+        <max_pixels>67108864</max_pixels>
+        <ecc_supported>0</ecc_supported>
+        <cuda_enabled>1</cuda_enabled>
+        <multiple_vgpu_supported>1</multiple_vgpu_supported>
+      </vgpu_type>
+      <vgpu_type id="223">
+        <name>GRID P4-2Q</name>
+        <class>Quadro</class>
+        <max_resolution>7680x4320</max_resolution>
+        <max_instance>2</max_instance>
+        <num_heads>4</num_heads>
+        <frl_config>60</frl_config>
+        <framebuffer>2147483648</framebuffer>
+        <max_pixels>134217728</max_pixels>
+        <ecc_supported>0</ecc_supported>
+        <cuda_enabled>1</cuda_enabled>
+        <multiple_vgpu_supported>1</multiple_vgpu_supported>
+      </vgpu_type>
+      <vgpu_type id="224">
+        <name>GRID P4-4Q</name>
+        <class>Quadro</class>
+        <max_resolution>7680x4320</max_resolution>
+        <max_instance>1</max_instance>
+        <num_heads>4</num_heads>
+        <frl_config>60</frl_config>
+        <framebuffer>4294967296</framebuffer>
+        <max_pixels>268435456</max_pixels>
+        <ecc_supported>0</ecc_supported>
+        <cuda_enabled>1</cuda_enabled>
+        <multiple_vgpu_supported>1</multiple_vgpu_supported>
+      </vgpu_type>
+      <vgpu_type id="252">
+        <name>GRID P4-1A</name>
+        <class>VirtualApplications</class>
+        <max_resolution>1280x1024</max_resolution>
+        <max_instance>4</max_instance>
+        <num_heads>2</num_heads>
+        <frl_config>45</frl_config>
+        <framebuffer>1073741824</framebuffer>
+        <max_pixels>2097152</max_pixels>
+        <ecc_supported>0</ecc_supported>
+        <cuda_enabled>0</cuda_enabled>
+        <multiple_vgpu_supported>1</multiple_vgpu_supported>
+      </vgpu_type>
+      <vgpu_type id="253">
+        <name>GRID P4-2A</name>
+        <class>VirtualApplications</class>
+        <max_resolution>1280x1024</max_resolution>
+        <max_instance>2</max_instance>
+        <num_heads>2</num_heads>
+        <frl_config>45</frl_config>
+        <framebuffer>2147483648</framebuffer>
+        <max_pixels>2097152</max_pixels>
+        <ecc_supported>0</ecc_supported>
+        <cuda_enabled>0</cuda_enabled>
+        <multiple_vgpu_supported>1</multiple_vgpu_supported>
+      </vgpu_type>
+    </supported_vgpus>
+  </pgpu_device>
+</vgpu_conf>
+EOF
+    
+    if [ -f "$fallback_config_path" ]; then
+        echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vgpuConfig.xml created successfully"
+        echo "$fallback_config_path"
+        return 0
+    else
+        echo -e "${RED}[!]${NC} Failed to create fallback Tesla P4 vgpuConfig.xml"
+        return 1
+    fi
 }
 
 # Function to download and extract vgpuConfig.xml from driver 16.4
@@ -225,24 +412,66 @@ download_tesla_p4_config() {
     if [ ! -f "$p4_driver_filename" ]; then
         echo -e "${YELLOW}[-]${NC} Downloading Tesla P4 configuration driver: $p4_driver_filename"
         
-        # Check if megadl is available
-        if ! command -v megadl >/dev/null 2>&1; then
-            echo -e "${RED}[!]${NC} megadl not available, Tesla P4 fix cannot be applied"
-            echo -e "${YELLOW}[-]${NC} Please install megatools package to enable Tesla P4 fix"
+        # Check network connectivity first
+        if ! check_network_connectivity; then
+            echo -e "${RED}[!]${NC} Network connectivity check failed"
+            echo -e "${YELLOW}[-]${NC} Please check your internet connection and try again"
             cd "$VGPU_DIR" || true
             return 1
         fi
         
-        # Download with error handling
-        if ! megadl "$p4_driver_url"; then
-            echo -e "${RED}[!]${NC} Failed to download Tesla P4 driver, Tesla P4 fix cannot be applied"
-            cd "$VGPU_DIR" || true
-            return 1
+        # Try multiple download methods with retry logic
+        local download_success=false
+        local max_retries=3
+        local retry_count=0
+        
+        # Method 1: Try megadl first
+        if command -v megadl >/dev/null 2>&1; then
+            echo -e "${YELLOW}[-]${NC} Attempting download using megadl (method 1/3)"
+            while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
+                retry_count=$((retry_count + 1))
+                echo -e "${YELLOW}[-]${NC} Download attempt $retry_count of $max_retries..."
+                
+                if timeout 300 megadl "$p4_driver_url" 2>/dev/null; then
+                    if [ -f "$p4_driver_filename" ]; then
+                        download_success=true
+                        echo -e "${GREEN}[+]${NC} Successfully downloaded using megadl"
+                        break
+                    fi
+                fi
+                
+                if [ $retry_count -lt $max_retries ]; then
+                    echo -e "${YELLOW}[-]${NC} Download failed, retrying in 5 seconds..."
+                    sleep 5
+                fi
+            done
+        else
+            echo -e "${YELLOW}[-]${NC} megadl not available, trying alternative methods"
         fi
         
-        # Check if file was actually downloaded
-        if [ ! -f "$p4_driver_filename" ]; then
-            echo -e "${RED}[!]${NC} Tesla P4 driver file not found after download"
+        # Method 2: Try alternative download sources if megadl fails
+        if [ "$download_success" = false ]; then
+            echo -e "${YELLOW}[-]${NC} Primary download failed, trying fallback methods..."
+            
+            # Check if we can use an already downloaded file in the main directory
+            if [ -f "$VGPU_DIR/$p4_driver_filename" ]; then
+                echo -e "${YELLOW}[-]${NC} Found existing driver file in main directory, using it"
+                cp "$VGPU_DIR/$p4_driver_filename" "$p4_driver_filename"
+                if [ -f "$p4_driver_filename" ]; then
+                    download_success=true
+                    echo -e "${GREEN}[+]${NC} Successfully copied existing driver file"
+                fi
+            fi
+        fi
+        
+        # Final check if download succeeded
+        if [ "$download_success" = false ] || [ ! -f "$p4_driver_filename" ]; then
+            echo -e "${RED}[!]${NC} Failed to download Tesla P4 driver after multiple attempts"
+            echo -e "${YELLOW}[-]${NC} Troubleshooting steps:"
+            echo -e "${YELLOW}[-]${NC} 1. Check internet connectivity: ping -c 3 google.com"
+            echo -e "${YELLOW}[-]${NC} 2. Install megatools if missing: apt install megatools"
+            echo -e "${YELLOW}[-]${NC} 3. Manually download driver 16.4 to: $VGPU_DIR/"
+            echo -e "${YELLOW}[-]${NC} 4. Or run: wget -O $VGPU_DIR/$p4_driver_filename [alternate_url]"
             cd "$VGPU_DIR" || true
             return 1
         fi
@@ -250,7 +479,10 @@ download_tesla_p4_config() {
         # Check MD5 hash
         local downloaded_md5=$(md5sum "$p4_driver_filename" 2>/dev/null | awk '{print $1}')
         if [ "$downloaded_md5" != "$p4_driver_md5" ]; then
-            echo -e "${YELLOW}[-]${NC} MD5 checksum mismatch for Tesla P4 driver, continuing anyway"
+            echo -e "${YELLOW}[-]${NC} MD5 checksum mismatch for Tesla P4 driver"
+            echo -e "${YELLOW}[-]${NC} Expected: $p4_driver_md5"
+            echo -e "${YELLOW}[-]${NC} Got:      $downloaded_md5"
+            echo -e "${YELLOW}[-]${NC} Continuing anyway, but file integrity may be compromised"
         else
             echo -e "${GREEN}[+]${NC} Tesla P4 driver MD5 checksum verified"
         fi
@@ -261,8 +493,12 @@ download_tesla_p4_config() {
     # Extract the driver
     echo -e "${YELLOW}[-]${NC} Extracting Tesla P4 driver for vgpuConfig.xml"
     chmod +x "$p4_driver_filename"
-    if ! ./"$p4_driver_filename" -x >/dev/null 2>&1; then
+    if ! timeout 60 ./"$p4_driver_filename" -x >/dev/null 2>&1; then
         echo -e "${RED}[!]${NC} Failed to extract Tesla P4 driver"
+        echo -e "${YELLOW}[-]${NC} This could be due to:"
+        echo -e "${YELLOW}[-]${NC} 1. Corrupted download (try re-downloading)"
+        echo -e "${YELLOW}[-]${NC} 2. Insufficient disk space in /tmp"
+        echo -e "${YELLOW}[-]${NC} 3. Permission issues"
         cd "$VGPU_DIR" || true
         return 1
     fi
@@ -276,6 +512,9 @@ download_tesla_p4_config() {
         return 0
     else
         echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted Tesla P4 driver"
+        echo -e "${YELLOW}[-]${NC} Expected location: $temp_dir/$extracted_dir/vgpuConfig.xml"
+        echo -e "${YELLOW}[-]${NC} Available files in extracted directory:"
+        ls -la "$extracted_dir/" 2>/dev/null | head -10
         cd "$VGPU_DIR" || true
         return 1
     fi
@@ -359,9 +598,83 @@ apply_tesla_p4_fix() {
                 echo -e "${RED}[!]${NC} Tesla P4 fix could not be applied"
             fi
         else
-            echo -e "${RED}[!]${NC} Failed to download Tesla P4 configuration, skipping fix"
-            echo -e "${YELLOW}[-]${NC} Tesla P4 may show incorrect vGPU profiles"
-            echo -e "${YELLOW}[-]${NC} You can manually apply the fix later by copying vgpuConfig.xml from driver 16.4"
+            # Try fallback configuration as last resort
+            echo -e "${YELLOW}[-]${NC} Primary Tesla P4 fix failed, trying fallback configuration..."
+            local fallback_config
+            fallback_config=$(create_fallback_tesla_p4_config)
+            local fallback_result=$?
+            
+            if [ $fallback_result -eq 0 ] && [ -f "$fallback_config" ]; then
+                echo -e "${YELLOW}[-]${NC} Applying fallback Tesla P4 configuration"
+                
+                # Create nvidia vgpu directory if it doesn't exist
+                if ! mkdir -p "/usr/share/nvidia/vgpu"; then
+                    echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory"
+                    fallback_result=1
+                fi
+                
+                # Backup existing config if it exists
+                if [ -f "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                    local backup_file="/usr/share/nvidia/vgpu/vgpuConfig.xml.backup.$(date +%Y%m%d_%H%M%S)"
+                    echo -e "${YELLOW}[-]${NC} Backing up existing vgpuConfig.xml to $backup_file"
+                    if ! cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file"; then
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to backup existing configuration file"
+                    fi
+                fi
+                
+                # Apply fallback configuration
+                if cp "$fallback_config" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                    echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vGPU configuration applied successfully"
+                    
+                    # Restart nvidia-vgpu-mgr.service to load new configuration
+                    echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
+                    if systemctl restart nvidia-vgpu-mgr.service; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                        sleep 5
+                        
+                        # Verify the fix worked with fallback
+                        echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available (fallback config)..."
+                        if command -v mdevctl >/dev/null 2>&1; then
+                            local mdev_output
+                            mdev_output=$(timeout 15 mdevctl types 2>/dev/null | grep -i "grid\|tesla\|p4" || true)
+                            if [ -n "$mdev_output" ]; then
+                                echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available (using fallback config):"
+                                echo "$mdev_output" | head -5 | sed 's/^/  /'
+                                echo -e "${YELLOW}[-]${NC} Note: Using fallback configuration. For optimal performance, manually apply official config later."
+                            else
+                                echo -e "${YELLOW}[-]${NC} Fallback config applied, but vGPU types not yet visible"
+                                echo -e "${YELLOW}[-]${NC} Try 'mdevctl types' after a few minutes or reboot"
+                            fi
+                        fi
+                        
+                        # Clean up fallback file
+                        rm -f "$fallback_config" 2>/dev/null
+                        
+                        echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration fix completed"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service"
+                        fallback_result=1
+                    fi
+                else
+                    echo -e "${RED}[!]${NC} Failed to apply fallback Tesla P4 vgpuConfig.xml"
+                    fallback_result=1
+                fi
+            fi
+            
+            # If fallback also failed, provide detailed manual instructions
+            if [ $fallback_result -ne 0 ]; then
+                echo -e "${RED}[!]${NC} Failed to download Tesla P4 configuration, skipping fix"
+                echo -e "${YELLOW}[-]${NC} Tesla P4 may show incorrect vGPU profiles"
+                echo -e "${YELLOW}[-]${NC} Manual fix instructions:"
+                echo -e "${YELLOW}[-]${NC} 1. Download NVIDIA driver 16.4: NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
+                echo -e "${YELLOW}[-]${NC} 2. Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x"
+                echo -e "${YELLOW}[-]${NC} 3. Copy config: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/"
+                echo -e "${YELLOW}[-]${NC} 4. Restart service: systemctl restart nvidia-vgpu-mgr.service"
+                echo -e "${YELLOW}[-]${NC} 5. Verify: mdevctl types | grep -i tesla"
+                echo -e "${YELLOW}[-]${NC} For more details, see: $VGPU_DIR/TESLA_P4_FIX.md"
+                echo ""
+                show_tesla_p4_troubleshooting
+            fi
         fi
         echo ""
     fi
