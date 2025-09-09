@@ -5,6 +5,7 @@ CONFIG_FILE="config.txt"
 # Variables
 LOG_FILE="debug.log"
 DEBUG=false
+VERBOSE=false
 STEP="${STEP:-1}"
 URL="${URL:-}"
 FILE="${FILE:-}"
@@ -93,10 +94,11 @@ show_tesla_p4_troubleshooting() {
 
 # Function to display usage information
 display_usage() {
-    echo -e "Usage: $0 [--debug] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help]"
+    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help]"
     echo -e ""
     echo -e "Options:"
     echo -e "  --debug               Enable debug mode with verbose output"
+    echo -e "  --verbose             Enable verbose logging for diagnostics"
     echo -e "  --step <number>       Jump to specific installation step"
     echo -e "  --url <url>           Use custom driver download URL"
     echo -e "  --file <file>         Use local driver file"
@@ -111,6 +113,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --debug)
             DEBUG=true
+            VERBOSE=true  # Debug mode implies verbose
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
             shift
             ;;
         --step)
@@ -152,11 +159,78 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Function to write to log file
+write_log() {
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $message" >> "$VGPU_DIR/$LOG_FILE"
+}
+
+# Function to log system information for diagnostics
+log_system_info() {
+    local section="$1"
+    write_log "=== SYSTEM INFO: $section ==="
+    
+    case "$section" in
+        "initial")
+            write_log "Script version: $SCRIPT_VERSION"
+            write_log "Working directory: $VGPU_DIR"
+            write_log "Log file: $VGPU_DIR/$LOG_FILE"
+            write_log "Debug mode: $DEBUG"
+            write_log "Verbose mode: $VERBOSE"
+            write_log "Current user: $(whoami)"
+            write_log "Current date: $(date)"
+            write_log "Kernel version: $(uname -r)"
+            write_log "Distribution: $(lsb_release -d 2>/dev/null || echo 'Unknown')"
+            write_log "Architecture: $(uname -m)"
+            write_log "Available memory: $(free -h | grep Mem | awk '{print $2}')"
+            write_log "Available disk space: $(df -h $VGPU_DIR | tail -1 | awk '{print $4}')"
+            ;;
+        "gpu")
+            write_log "GPU Information:"
+            lspci -nn | grep -i nvidia >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No NVIDIA GPUs found"
+            lspci -nn | grep -Ei '(VGA compatible controller|3D controller)' >> "$VGPU_DIR/$LOG_FILE" 2>&1
+            ;;
+        "kernel")
+            write_log "Kernel and module information:"
+            write_log "Running kernel: $(uname -r)"
+            write_log "Available kernels:"
+            find /boot -name "vmlinuz-*" -exec basename {} \; | sort >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "Could not list kernels"
+            write_log "Loaded NVIDIA modules:"
+            lsmod | grep nvidia >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No NVIDIA modules loaded"
+            ;;
+        "services")
+            write_log "Service status information:"
+            systemctl status nvidia-vgpud.service >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-vgpud.service not found"
+            systemctl status nvidia-vgpu-mgr.service >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-vgpu-mgr.service not found"
+            ;;
+        "driver")
+            write_log "Driver status information:"
+            nvidia-smi >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-smi not available or failed"
+            nvidia-smi vgpu >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-smi vgpu not available or failed"
+            mdevctl types >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "mdevctl not available or no vGPU types found"
+            ;;
+        "iommu")
+            write_log "IOMMU status:"
+            dmesg | grep -i iommu >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No IOMMU messages found"
+            if [ -d "/sys/class/iommu" ]; then
+                ls -la /sys/class/iommu/ >> "$VGPU_DIR/$LOG_FILE" 2>&1
+            else
+                write_log "IOMMU not available"
+            fi
+            ;;
+    esac
+    
+    write_log "=== END SYSTEM INFO: $section ==="
+}
+
 # Function to run a command with specified description and log level
 run_command() {
     local description="$1"
     local log_level="$2"
     local command="$3"
+    local exit_on_error="${4:-true}"  # Default to exit on error
+    local show_output="${5:-false}"   # Default to hide output unless verbose
 
     case "$log_level" in
         "info")
@@ -173,11 +247,42 @@ run_command() {
             ;;
     esac
 
-    if [ "$DEBUG" != "true" ]; then
-        eval "$command" > /dev/null 2>> "$VGPU_DIR/$LOG_FILE"
+    # Log command being executed
+    write_log "$log_level: $description"
+    write_log "COMMAND: $command"
+
+    # Show verbose output if requested or if debug/verbose mode is enabled
+    if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ] || [ "$show_output" = "true" ]; then
+        echo -e "${GRAY}[DEBUG] Executing: $command${NC}"
+        eval "$command" 2>&1 | tee -a "$VGPU_DIR/$LOG_FILE"
+        local exit_code=${PIPESTATUS[0]}
     else
-        eval "$command"
+        eval "$command" >> "$VGPU_DIR/$LOG_FILE" 2>&1
+        local exit_code=$?
     fi
+
+    # Log command result
+    write_log "EXIT_CODE: $exit_code"
+    
+    if [ $exit_code -ne 0 ]; then
+        echo -e "${RED}[!]${NC} Command failed with exit code: $exit_code"
+        write_log "ERROR: Command '$command' failed with exit code $exit_code"
+        
+        if [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Last 10 lines from log file:${NC}"
+            tail -10 "$VGPU_DIR/$LOG_FILE" | sed 's/^/  /'
+        fi
+        
+        if [ "$exit_on_error" = "true" ]; then
+            echo -e "${RED}[!]${NC} Installation failed. Check $VGPU_DIR/$LOG_FILE for details."
+            echo -e "${YELLOW}[-]${NC} Run with --verbose flag for more detailed output."
+            exit $exit_code
+        fi
+    else
+        write_log "SUCCESS: Command completed successfully"
+    fi
+    
+    return $exit_code
 }
 
 # Check Proxmox version
@@ -826,6 +931,25 @@ echo -e "${BLUE}by wvthoog.nl${NC}"
 echo -e ""
 echo -e "Welcome to the Nvidia vGPU installer version $SCRIPT_VERSION for Proxmox"
 echo -e "This system is running Proxmox version ${version} with kernel ${kernel}"
+
+# Initialize logging and show diagnostics status
+if [ "$VERBOSE" = "true" ]; then
+    echo -e "${GREEN}[+]${NC} Verbose logging enabled - detailed diagnostics will be shown"
+elif [ "$DEBUG" = "true" ]; then
+    echo -e "${GREEN}[+]${NC} Debug mode enabled - all command output will be shown"
+fi
+echo -e "${YELLOW}[-]${NC} Logging to: $VGPU_DIR/$LOG_FILE"
+
+# Initialize log file and capture initial system information
+> "$VGPU_DIR/$LOG_FILE"  # Clear previous log
+log_system_info "initial"
+log_system_info "gpu"
+log_system_info "kernel"
+
+if [ "$VERBOSE" = "true" ]; then
+    echo -e "${GRAY}[DEBUG] Initial system information logged${NC}"
+fi
+
 echo ""
 
 # Main installation process
@@ -911,7 +1035,8 @@ case $STEP in
             # sed -i 's#^enterprise #no-subscription#' /etc/apt/sources.list.d/ceph.list
 
             # APT update/upgrade
-            run_command "Running APT Update" "info" "apt update"
+            write_log "Starting APT operations"
+            run_command "Running APT Update" "info" "apt update" true true
 
             # Prompt the user for confirmation
             echo ""
@@ -921,9 +1046,10 @@ case $STEP in
             # Check user's choice
             if [ "$confirmation" == "y" ]; then
                 #echo "running apt dist-upgrade"
-                run_command "Running APT Dist-Upgrade (...this might take some time)" "info" "apt dist-upgrade -y"
+                run_command "Running APT Dist-Upgrade (...this might take some time)" "info" "apt dist-upgrade -y" true true
             else
                 echo -e "${YELLOW}[-]${NC} Skipping APT Dist-Upgrade"
+                write_log "APT dist-upgrade skipped by user"
             fi          
 
             # APT installing packages
@@ -942,8 +1068,9 @@ case $STEP in
             echo -e "${GREEN}[+]${NC} Current running kernel: $current_kernel"
             
             # Install both current kernel headers and 6.5 headers for compatibility
-            run_command "Installing packages" "info" "apt install -y git build-essential dkms proxmox-kernel-6.5 proxmox-headers-6.5 mdevctl megatools"
-            run_command "Installing headers for current kernel" "info" "apt install -y proxmox-headers-$current_kernel_base || apt install -y pve-headers-$current_kernel"
+            write_log "Installing required packages for vGPU"
+            run_command "Installing packages" "info" "apt install -y git build-essential dkms proxmox-kernel-6.5 proxmox-headers-6.5 mdevctl megatools" true true
+            run_command "Installing headers for current kernel" "info" "apt install -y proxmox-headers-$current_kernel_base || apt install -y pve-headers-$current_kernel" false true
 
             echo -e "${YELLOW}[-]${NC} Kernel 6.5 installed. Kernel pinning will be determined based on selected driver version."
             echo -e "${YELLOW}[-]${NC} v16.x drivers (535.x series) require kernel 6.5 for stability"
@@ -1790,12 +1917,20 @@ case $STEP in
         echo ""
 
         # Check if IOMMU / DMAR is enabled
+        if [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Checking IOMMU status...${NC}"
+        fi
+        log_system_info "iommu"
+        
         if dmesg | grep -e IOMMU | grep -q "Detected AMD IOMMU"; then
             echo -e "${GREEN}[+]${NC} AMD IOMMU Enabled"
+            write_log "IOMMU: AMD IOMMU detected and enabled"
         elif dmesg | grep -e DMAR | grep -q "IOMMU enabled"; then
             echo -e "${GREEN}[+]${NC} Intel IOMMU Enabled"
+            write_log "IOMMU: Intel IOMMU detected and enabled"
         else
             vendor_id=$(cat /proc/cpuinfo | grep vendor_id | awk 'NR==1{print $3}')
+            write_log "IOMMU: Not detected. CPU vendor: $vendor_id"
             if [ "$vendor_id" = "AuthenticAMD" ]; then
                 echo -e "${RED}[!]${NC} AMD IOMMU Disabled"
                 echo -e ""
@@ -1819,8 +1954,10 @@ case $STEP in
             read -r continue_choice
             if [ "$continue_choice" != "y" ]; then
                 echo "Exiting script."
+                write_log "EXIT: User chose to exit due to disabled IOMMU"
                 exit 0
             fi
+            write_log "WARNING: User chose to continue despite disabled IOMMU"
         fi
 
         if [ -n "$URL" ]; then
@@ -2137,6 +2274,12 @@ case $STEP in
 
         # Make driver executable
         chmod +x $driver_filename
+        write_log "Driver file made executable: $driver_filename"
+        
+        if [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Driver file permissions: $(ls -la $driver_filename)${NC}"
+            echo -e "${GRAY}[DEBUG] Driver file size: $(du -h $driver_filename | cut -f1)${NC}"
+        fi
 
         # Verify kernel headers are available for driver compilation
         verify_kernel_headers() {
@@ -2193,6 +2336,8 @@ case $STEP in
 
         # Patch and install the driver only if vGPU is not native
         if [ "$VGPU_SUPPORT" = "Yes" ]; then
+            write_log "Installing vGPU driver with patching for non-native vGPU support"
+            
             # Add custom to original filename
             custom_filename="${driver_filename%.run}-custom.run"
 
@@ -2200,17 +2345,53 @@ case $STEP in
             if [ -e "$custom_filename" ]; then
                 mv "$custom_filename" "$custom_filename.bak"
                 echo -e "${YELLOW}[-]${NC} Moved $custom_filename to $custom_filename.bak"
+                write_log "Moved existing custom driver: $custom_filename to backup"
             fi
 
             # Patch and install the driver
-            run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch"
+            echo -e "${YELLOW}[-]${NC} Applying vGPU patch to driver..."
+            if [ "$VERBOSE" = "true" ]; then
+                echo -e "${GRAY}[DEBUG] Patch file: $VGPU_DIR/vgpu-proxmox/$driver_patch${NC}"
+                echo -e "${GRAY}[DEBUG] Checking patch file existence...${NC}"
+                if [ -f "$VGPU_DIR/vgpu-proxmox/$driver_patch" ]; then
+                    echo -e "${GRAY}[DEBUG] Patch file found${NC}"
+                else
+                    echo -e "${RED}[!]${NC} Patch file not found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
+                    write_log "ERROR: Patch file not found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
+                fi
+            fi
+            
+            run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch" true true
+            
+            if [ -f "$custom_filename" ]; then
+                echo -e "${GREEN}[+]${NC} Patched driver created successfully: $custom_filename"
+                write_log "Patched driver created: $custom_filename"
+                
+                if [ "$VERBOSE" = "true" ]; then
+                    echo -e "${GRAY}[DEBUG] Patched driver size: $(du -h $custom_filename | cut -f1)${NC}"
+                fi
+            else
+                echo -e "${RED}[!]${NC} Failed to create patched driver"
+                write_log "ERROR: Patched driver not created"
+                exit 1
+            fi
+            
             # Run the patched driver installer
-            run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s"
+            echo -e "${YELLOW}[-]${NC} Installing patched vGPU driver (this may take several minutes)..."
+            log_system_info "kernel"  # Log kernel state before installation
+            run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s" true true
+            
         elif [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Unknown" ]; then
+            write_log "Installing native vGPU driver (no patching required)"
+            
             # Run the regular driver installer
-            run_command "Installing native driver" "info" "./$driver_filename --dkms -m=kernel -s"
+            echo -e "${YELLOW}[-]${NC} Installing native vGPU driver (this may take several minutes)..."
+            log_system_info "kernel"  # Log kernel state before installation
+            run_command "Installing native driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
+            
         else
             echo -e "${RED}[!]${NC} Unknown or unsupported GPU: $VGPU_SUPPORT"
+            write_log "ERROR: Unknown GPU support type: $VGPU_SUPPORT"
             echo ""
             echo "Exiting script."
             echo ""
@@ -2218,25 +2399,76 @@ case $STEP in
         fi
 
         echo -e "${GREEN}[+]${NC} Driver installed successfully."
+        write_log "Driver installation completed successfully"
+        
+        # Log post-installation system state
+        log_system_info "kernel"
 
         echo -e "${GREEN}[+]${NC} Nvidia driver version: $driver_filename"
+        write_log "Driver verification starting"
+
+        # Wait for services to fully initialize
+        echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to initialize..."
+        sleep 5
 
         nvidia_smi_output=$(nvidia-smi vgpu 2>&1)
+        write_log "nvidia-smi vgpu output: $nvidia_smi_output"
 
         # Extract version from FILE
         FILE_VERSION=$(echo "$driver_filename" | grep -oP '\d+\.\d+\.\d+')
+        write_log "Expected driver version: $FILE_VERSION"
 
         if [[ "$nvidia_smi_output" == *"NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver."* ]] || [[ "$nvidia_smi_output" == *"No supported devices in vGPU mode"* ]]; then
-            echo -e "${RED}[+]${NC} Nvidia driver not properly loaded"
+            echo -e "${RED}[!]${NC} Nvidia driver not properly loaded"
+            write_log "ERROR: NVIDIA driver not properly loaded"
+            
+            if [ "$VERBOSE" = "true" ]; then
+                echo -e "${GRAY}[DEBUG] Full nvidia-smi vgpu output:${NC}"
+                echo "$nvidia_smi_output" | sed 's/^/  /'
+                echo -e "${GRAY}[DEBUG] Checking for loaded NVIDIA modules:${NC}"
+                lsmod | grep nvidia | sed 's/^/  /'
+                echo -e "${GRAY}[DEBUG] Checking dmesg for NVIDIA messages:${NC}"
+                dmesg | grep -i nvidia | tail -10 | sed 's/^/  /'
+            fi
+            
         elif [[ "$nvidia_smi_output" == *"Driver Version: $FILE_VERSION"* ]]; then
             echo -e "${GREEN}[+]${NC} Nvidia driver properly loaded, version matches $FILE_VERSION"
+            write_log "SUCCESS: Driver properly loaded with matching version"
         else
             echo -e "${GREEN}[+]${NC} Nvidia driver properly loaded"
+            write_log "SUCCESS: Driver appears to be loaded (version check inconclusive)"
+            
+            if [ "$VERBOSE" = "true" ]; then
+                echo -e "${GRAY}[DEBUG] nvidia-smi vgpu output:${NC}"
+                echo "$nvidia_smi_output" | head -10 | sed 's/^/  /'
+            fi
         fi
+        
+        # Log final driver status
+        log_system_info "driver"
 
         # Start nvidia-services
-        run_command "Enable nvidia-vgpud.service" "info" "systemctl enable --now nvidia-vgpud.service"
-        run_command "Enable nvidia-vgpu-mgr.service" "info" "systemctl enable --now nvidia-vgpu-mgr.service"
+        echo -e "${YELLOW}[-]${NC} Starting NVIDIA vGPU services..."
+        write_log "Starting NVIDIA vGPU services"
+        
+        run_command "Enable nvidia-vgpud.service" "info" "systemctl enable --now nvidia-vgpud.service" false
+        run_command "Enable nvidia-vgpu-mgr.service" "info" "systemctl enable --now nvidia-vgpu-mgr.service" false
+        
+        # Wait a moment for services to start
+        sleep 3
+        
+        # Log service status for diagnostics
+        log_system_info "services"
+        
+        if [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Checking service status...${NC}"
+            systemctl is-active nvidia-vgpud.service >/dev/null 2>&1 && \
+                echo -e "${GRAY}[DEBUG] nvidia-vgpud.service is active${NC}" || \
+                echo -e "${GRAY}[DEBUG] nvidia-vgpud.service is not active${NC}"
+            systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1 && \
+                echo -e "${GRAY}[DEBUG] nvidia-vgpu-mgr.service is active${NC}" || \
+                echo -e "${GRAY}[DEBUG] nvidia-vgpu-mgr.service is not active${NC}"
+        fi
 
         # Apply Tesla P4 vGPU configuration fix if needed
         apply_tesla_p4_fix
@@ -2320,6 +2552,7 @@ case $STEP in
 
         echo ""
         echo "Step 2 completed and installation process is now finished."
+        write_log "Installation step 2 completed successfully"
         echo ""
         
         # Tesla P4 specific messaging
@@ -2333,10 +2566,44 @@ case $STEP in
         echo "Login to your Proxmox server over http/https. Click the VM and go to Hardware."
         echo "Under Add choose PCI Device and assign the desired mdev type to your VM"
         echo ""
+        
+        # Show final diagnostics
+        echo -e "${YELLOW}[-]${NC} Installation diagnostics logged to: $VGPU_DIR/$LOG_FILE"
+        if [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Final system state:${NC}"
+            echo -e "${GRAY}[DEBUG] - NVIDIA services status logged${NC}"
+            echo -e "${GRAY}[DEBUG] - Driver status logged${NC}"
+            echo -e "${GRAY}[DEBUG] - Available vGPU types logged${NC}"
+            
+            echo -e "${GRAY}[DEBUG] Quick verification:${NC}"
+            if command -v mdevctl >/dev/null 2>&1; then
+                local mdev_count=$(mdevctl types 2>/dev/null | wc -l)
+                echo -e "${GRAY}[DEBUG] - Available vGPU types: $mdev_count${NC}"
+            else
+                echo -e "${GRAY}[DEBUG] - mdevctl not available${NC}"
+            fi
+            
+            if systemctl is-active nvidia-vgpud.service >/dev/null 2>&1; then
+                echo -e "${GRAY}[DEBUG] - nvidia-vgpud.service: active${NC}"
+            else
+                echo -e "${GRAY}[DEBUG] - nvidia-vgpud.service: inactive${NC}"
+            fi
+            
+            if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
+                echo -e "${GRAY}[DEBUG] - nvidia-vgpu-mgr.service: active${NC}"
+            else
+                echo -e "${GRAY}[DEBUG] - nvidia-vgpu-mgr.service: inactive${NC}"
+            fi
+        fi
+        
         echo "Removing the config.txt file."
+        write_log "Removing configuration file"
         echo ""
 
         rm -f "$VGPU_DIR/$CONFIG_FILE" 
+        
+        # Final log entry
+        write_log "Installation completed - configuration file removed" 
 
         # Option to license the vGPU
         configure_fastapi_dls
