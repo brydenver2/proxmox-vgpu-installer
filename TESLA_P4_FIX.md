@@ -25,8 +25,15 @@ The installer now automatically detects Tesla P4 cards and applies a robust conf
 
 ## Enhanced Error Handling
 
-The fix now includes:
+The fix now includes comprehensive error handling and verification:
 
+### Improved Verification (v1.2+)
+- **Specific P4/P40 Detection**: Now distinguishes between "GRID P4-" and "GRID P40-" profiles
+- **Configuration Validation**: Verifies vgpuConfig.xml contains Tesla P4 device ID (1BB3)  
+- **Enhanced Service Management**: Extended restart timing for better reliability
+- **Status Reporting**: Clear success/failure indicators with specific recommendations
+
+### Legacy Features
 - **Multiple retry attempts** with exponential backoff for downloads
 - **Alternative download methods** when primary method fails
 - **Built-in fallback configuration** when all downloads fail
@@ -114,19 +121,80 @@ Users with Tesla P4 cards will see additional messages during installation:
 [Complete troubleshooting guide appears here]
 ```
 
-## Command Line Options
+### Command Line Options
 
 The installer now supports Tesla P4-specific command line options:
 
 ```bash
+# Check Tesla P4 status and diagnose P40/P4 profile issues
+./proxmox-installer.sh --tesla-p4-status
+
 # Show Tesla P4 troubleshooting guide
 ./proxmox-installer.sh --tesla-p4-help
 
 # Run only the Tesla P4 fix (for existing installations)
 ./proxmox-installer.sh --tesla-p4-fix
 
+# Comprehensive validation of Tesla P4 setup
+./validate_tesla_p4.sh
+
 # Show all available options
 ./proxmox-installer.sh --help
+```
+
+## Diagnosing Tesla P4 Issues
+
+The enhanced Tesla P4 fix now provides multiple ways to diagnose and verify the installation:
+
+### Comprehensive Validation
+```bash
+./validate_tesla_p4.sh
+```
+
+This standalone script performs a complete validation:
+- Hardware detection (Tesla P4 device ID 1bb3)
+- NVIDIA service status checking
+- Configuration file validation
+- vGPU profile analysis (P4 vs P40)
+- Specific recommendations based on findings
+
+### Quick Status Check
+```bash
+./proxmox-installer.sh --tesla-p4-status
+```
+
+This built-in diagnostic tool:
+- Detects if Tesla P4 is present (device ID 1bb3)
+- Checks if NVIDIA services are running
+- Verifies vgpuConfig.xml contains Tesla P4 data
+- Identifies if P4 or P40 profiles are showing
+- Provides specific recommendations
+
+### Manual Verification
+After running the installer or Tesla P4 fix, verify the results:
+
+```bash
+# Check for P4 profiles (correct)
+mdevctl types | grep -i "p4-"
+
+# Check for P40 profiles (incorrect - indicates fix needed)
+mdevctl types | grep -i "p40-"
+
+# Check NVIDIA services
+systemctl status nvidia-vgpu-mgr.service
+```
+
+**Expected Tesla P4 Output:**
+```
+nvidia-222    Available instances: 4    Name: GRID P4-1Q
+nvidia-223    Available instances: 2    Name: GRID P4-2Q  
+nvidia-224    Available instances: 1    Name: GRID P4-4Q
+```
+
+**Problematic Output (indicates fix needed):**
+```
+nvidia-156    Available instances: 12   Name: GRID P40-2B
+nvidia-215    Available instances: 12   Name: GRID P40-2B4
 ```
 
 ## Driver Compatibility
