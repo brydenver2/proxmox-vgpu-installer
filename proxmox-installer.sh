@@ -283,8 +283,8 @@ download_tesla_p4_config() {
                         retry_count=$((retry_count + 1))
                         echo -e "${YELLOW}[-]${NC} Download attempt $retry_count of $max_retries..."
                         
-                        if timeout 300 megadl "$current_url" 2>/dev/null; then
-                            if [ -f "$p4_driver_filename" ]; then
+                        if timeout 300 megadl "$current_url" 2>&1 | grep -v "ERROR\|failed" >/dev/null; then
+                            if [ -f "$p4_driver_filename" ] && [ -s "$p4_driver_filename" ]; then
                                 download_success=true
                                 echo -e "${GREEN}[+]${NC} Successfully downloaded using megadl"
                                 break
@@ -353,6 +353,10 @@ download_tesla_p4_config() {
         # Final check if download succeeded
         if [ "$download_success" = false ] || [ ! -f "$p4_driver_filename" ]; then
             echo -e "${RED}[!]${NC} Failed to download Tesla P4 driver after multiple attempts from all sources"
+            echo -e "${YELLOW}[-]${NC} Download failure details:"
+            echo -e "${YELLOW}[-]${NC} - Mega.nz URL may be throttled or blocked"
+            echo -e "${YELLOW}[-]${NC} - Google Storage URLs returned 403 Forbidden (not publicly accessible)"  
+            echo -e "${YELLOW}[-]${NC} - Network connectivity verified but specific URLs are unavailable"
             echo -e "${YELLOW}[-]${NC} Troubleshooting steps:"
             echo -e "${YELLOW}[-]${NC} 1. Check internet connectivity: ping -c 3 google.com"
             echo -e "${YELLOW}[-]${NC} 2. Install megatools if missing: apt install megatools"
@@ -547,10 +551,30 @@ apply_tesla_p4_fix() {
                 if cp "$fallback_config" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
                     echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vGPU configuration applied successfully"
                     
+                    # Verify configuration contains correct device ID
+                    if grep -q "0x1BB3\|0x1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${GREEN}[+]${NC} Confirmed: Configuration contains Tesla P4 device ID (0x1BB3)"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Could not verify Tesla P4 device ID in configuration"
+                    fi
+                    
+                    # Additional verification - check if P40 entries are present (should not be)
+                    if grep -q "P40-\|0x1B38\|0x1b38" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${YELLOW}[-]${NC} Warning: Configuration still contains P40 references"
+                        echo -e "${YELLOW}[-]${NC} This may indicate the fallback config was not applied correctly"
+                    else
+                        echo -e "${GREEN}[+]${NC} Confirmed: No P40 references found in configuration"
+                    fi
+                    
                     # Restart nvidia-vgpu-mgr.service to load new configuration
                     echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
                     if systemctl restart nvidia-vgpu-mgr.service; then
                         echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                        sleep 10
+                        
+                        # Also restart nvidia-vgpud service to ensure complete reload
+                        echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpud.service to ensure complete configuration reload"
+                        systemctl restart nvidia-vgpud.service 2>/dev/null || echo -e "${YELLOW}[-]${NC} nvidia-vgpud.service restart skipped (may not be running)"
                         sleep 5
                         
                         # Verify the fix worked with fallback
