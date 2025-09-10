@@ -11,7 +11,7 @@ URL="${URL:-}"
 FILE="${FILE:-}"
 DRIVER_VERSION="${DRIVER_VERSION:-}"
 SCRIPT_VERSION=1.2
-VGPU_DIR=$(pwd)
+VGPU_DIR="$(realpath "$(pwd)")"
 VGPU_SUPPORT="${VGPU_SUPPORT:-}"
 DRIVER_VERSION="${DRIVER_VERSION:-}"
 
@@ -243,6 +243,11 @@ download_tesla_p4_config() {
     
     echo -e "${GREEN}[+]${NC} Tesla P4 detected - downloading driver 16.4 for vgpuConfig.xml"
     
+    if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+        echo -e "${GRAY}[DEBUG] Original directory: $VGPU_DIR${NC}"
+        echo -e "${GRAY}[DEBUG] Current directory: $(pwd)${NC}"
+    fi
+    
     # Create temporary directory for Tesla P4 fix
     local temp_dir="/tmp/tesla_p4_fix"
     mkdir -p "$temp_dir"
@@ -259,7 +264,9 @@ download_tesla_p4_config() {
         if ! check_network_connectivity; then
             echo -e "${RED}[!]${NC} Network connectivity check failed"
             echo -e "${YELLOW}[-]${NC} Please check your internet connection and try again"
-            cd "$VGPU_DIR" || true
+            cd "$VGPU_DIR" || {
+                echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR"
+            }
             return 1
         fi
         
@@ -364,7 +371,9 @@ download_tesla_p4_config() {
             echo -e "${YELLOW}[-]${NC}    - Official NVIDIA: Check NVIDIA Enterprise download portal"
             echo -e "${YELLOW}[-]${NC}    - Community sources: Check vGPU Unlocking Discord for current links"
             echo -e "${YELLOW}[-]${NC} 4. Place downloaded file as: $VGPU_DIR/$p4_driver_filename"
-            cd "$VGPU_DIR" || true
+            cd "$VGPU_DIR" || {
+                echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR"
+            }
             return 1
         fi
         
@@ -391,7 +400,9 @@ download_tesla_p4_config() {
         echo -e "${YELLOW}[-]${NC} 1. Corrupted download (try re-downloading)"
         echo -e "${YELLOW}[-]${NC} 2. Insufficient disk space in /tmp"
         echo -e "${YELLOW}[-]${NC} 3. Permission issues"
-        cd "$VGPU_DIR" || true
+        cd "$VGPU_DIR" || {
+            echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR"
+        }
         return 1
     fi
     
@@ -399,7 +410,9 @@ download_tesla_p4_config() {
     local extracted_dir="${p4_driver_filename%.run}"
     if [ -f "$extracted_dir/vgpuConfig.xml" ]; then
         echo -e "${GREEN}[+]${NC} Tesla P4 vgpuConfig.xml extracted successfully" >&2
-        cd "$VGPU_DIR" || true
+        cd "$VGPU_DIR" || {
+            echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR" >&2
+        }
         echo "$temp_dir/$extracted_dir/vgpuConfig.xml"
         return 0
     else
@@ -407,7 +420,9 @@ download_tesla_p4_config() {
         echo -e "${YELLOW}[-]${NC} Expected location: $temp_dir/$extracted_dir/vgpuConfig.xml" >&2
         echo -e "${YELLOW}[-]${NC} Available files in extracted directory:" >&2
         ls -la "$extracted_dir/" 2>/dev/null | head -10 >&2
-        cd "$VGPU_DIR" || true
+        cd "$VGPU_DIR" || {
+            echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR" >&2
+        }
         return 1
     fi
 }
