@@ -142,7 +142,7 @@ check_network_connectivity() {
 create_fallback_tesla_p4_config() {
     local fallback_config_path="/tmp/tesla_p4_fallback_vgpuConfig.xml"
     
-    echo -e "${YELLOW}[-]${NC} Creating fallback Tesla P4 vgpuConfig.xml"
+    echo -e "${YELLOW}[-]${NC} Creating fallback Tesla P4 vgpuConfig.xml" >&2
     
     # Create a basic Tesla P4 configuration based on known working config
     cat > "$fallback_config_path" << 'EOF'
@@ -221,11 +221,11 @@ create_fallback_tesla_p4_config() {
 EOF
     
     if [ -f "$fallback_config_path" ]; then
-        echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vgpuConfig.xml created successfully"
+        echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vgpuConfig.xml created successfully" >&2
         echo "$fallback_config_path"
         return 0
     else
-        echo -e "${RED}[!]${NC} Failed to create fallback Tesla P4 vgpuConfig.xml"
+        echo -e "${RED}[!]${NC} Failed to create fallback Tesla P4 vgpuConfig.xml" >&2
         return 1
     fi
 }
@@ -344,15 +344,15 @@ download_tesla_p4_config() {
     # Check if vgpuConfig.xml was extracted
     local extracted_dir="${p4_driver_filename%.run}"
     if [ -f "$extracted_dir/vgpuConfig.xml" ]; then
-        echo -e "${GREEN}[+]${NC} Tesla P4 vgpuConfig.xml extracted successfully"
+        echo -e "${GREEN}[+]${NC} Tesla P4 vgpuConfig.xml extracted successfully" >&2
         cd "$VGPU_DIR" || true
         echo "$temp_dir/$extracted_dir/vgpuConfig.xml"
         return 0
     else
-        echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted Tesla P4 driver"
-        echo -e "${YELLOW}[-]${NC} Expected location: $temp_dir/$extracted_dir/vgpuConfig.xml"
-        echo -e "${YELLOW}[-]${NC} Available files in extracted directory:"
-        ls -la "$extracted_dir/" 2>/dev/null | head -10
+        echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted Tesla P4 driver" >&2
+        echo -e "${YELLOW}[-]${NC} Expected location: $temp_dir/$extracted_dir/vgpuConfig.xml" >&2
+        echo -e "${YELLOW}[-]${NC} Available files in extracted directory:" >&2
+        ls -la "$extracted_dir/" 2>/dev/null | head -10 >&2
         cd "$VGPU_DIR" || true
         return 1
     fi
