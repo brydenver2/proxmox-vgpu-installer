@@ -468,58 +468,124 @@ apply_tesla_p4_fix() {
                     echo -e "${YELLOW}[-]${NC} This might explain why P40 profiles are still showing"
                 fi
                 
-                # Restart nvidia-vgpu-mgr.service to load new configuration
-                echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
-                if systemctl restart nvidia-vgpu-mgr.service; then
-                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
-                    # Give service more time to start and initialize
-                    echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to initialize with new configuration..."
-                    sleep 10
-                else
-                    echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service, manual restart may be needed"
+                # Enhanced service restart sequence to ensure complete configuration reload
+                echo -e "${YELLOW}[-]${NC} Restarting NVIDIA services to load new configuration"
+                
+                # Stop services in reverse order first
+                echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpu-mgr.service..."
+                systemctl stop nvidia-vgpu-mgr.service 2>/dev/null || true
+                
+                echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpud.service..."
+                systemctl stop nvidia-vgpud.service 2>/dev/null || true
+                
+                # Wait for services to fully stop
+                echo -e "${YELLOW}[-]${NC} Waiting for services to fully stop..."
+                sleep 5
+                
+                # Clear any potential driver cache (if nvidia-modprobe is available)
+                if command -v nvidia-modprobe >/dev/null 2>&1; then
+                    echo -e "${YELLOW}[-]${NC} Clearing NVIDIA kernel module cache..."
+                    modprobe -r nvidia_vgpu_vfio nvidia 2>/dev/null || true
+                    sleep 2
+                    modprobe nvidia 2>/dev/null || true
                 fi
                 
-                # Verify the fix worked with more specific P4 detection
+                # Start services in correct order
+                echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpud.service..."
+                if systemctl start nvidia-vgpud.service; then
+                    echo -e "${GREEN}[+]${NC} nvidia-vgpud.service started successfully"
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to start nvidia-vgpud.service"
+                fi
+                
+                # Wait before starting the manager service
+                sleep 5
+                
+                echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpu-mgr.service..."
+                if systemctl start nvidia-vgpu-mgr.service; then
+                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service started successfully"
+                    
+                    # Give services more time to fully initialize and load configuration
+                    echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to fully initialize with new configuration..."
+                    sleep 15
+                    
+                    # Additional verification that the service is actually running
+                    if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service is running and active"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: nvidia-vgpu-mgr.service may not be fully initialized"
+                    fi
+                else
+                    echo -e "${RED}[!]${NC} Failed to start nvidia-vgpu-mgr.service"
+                    echo -e "${YELLOW}[-]${NC} Trying restart instead of start..."
+                    if systemctl restart nvidia-vgpu-mgr.service; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                        sleep 10
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service, manual intervention may be needed"
+                    fi
+                fi
+                
+                # Verify the fix worked with more specific P4 detection and retry logic
                 echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available..."
                 if command -v mdevctl >/dev/null 2>&1; then
                     local mdev_output
                     local p4_profiles_found=false
                     local p40_profiles_found=false
+                    local retry_count=0
+                    local max_retries=3
                     
-                    # Get all mdevctl output
-                    mdev_output=$(timeout 20 mdevctl types 2>/dev/null || true)
-                    
-                    if [ -n "$mdev_output" ]; then
-                        # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
-                        if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
-                            p4_profiles_found=true
-                            echo -e "${GREEN}[+]${NC} Tesla P4 vGPU profiles detected:"
-                            echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                    # Retry verification with increasing delays
+                    while [ $retry_count -lt $max_retries ] && [ "$p4_profiles_found" = false ]; do
+                        if [ $retry_count -gt 0 ]; then
+                            echo -e "${YELLOW}[-]${NC} Verification attempt $((retry_count + 1)) of $max_retries..."
+                            sleep $((retry_count * 10))  # 10, 20, 30 seconds
                         fi
                         
-                        # Check if P40 profiles are still showing (this indicates the fix didn't work)
-                        if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
-                            p40_profiles_found=true
-                            echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected:"
-                            echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
-                        fi
+                        # Get all mdevctl output with extended timeout
+                        mdev_output=$(timeout 30 mdevctl types 2>/dev/null || true)
                         
-                        if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
-                            echo -e "${GREEN}[+]${NC} Tesla P4 fix applied successfully - P4 profiles are now visible"
-                            echo -e "${GREEN}[+]${NC} P40 profiles have been correctly replaced with P4 profiles"
-                        elif [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = true ]; then
-                            echo -e "${YELLOW}[-]${NC} Partial success: P4 profiles found, but P40 profiles still present"
-                            echo -e "${YELLOW}[-]${NC} This may indicate multiple GPUs or incomplete configuration replacement"
-                        elif [ "$p40_profiles_found" = true ]; then
-                            echo -e "${RED}[!]${NC} Tesla P4 fix may not have worked - still showing P40 profiles"
-                            echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting"
+                        if [ -n "$mdev_output" ]; then
+                            # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
+                            if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
+                                p4_profiles_found=true
+                                echo -e "${GREEN}[+]${NC} Tesla P4 vGPU profiles detected:"
+                                echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                            fi
+                            
+                            # Check if P40 profiles are still showing (this indicates the fix didn't work)
+                            if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
+                                p40_profiles_found=true
+                                echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected:"
+                                echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                            fi
                         else
-                            echo -e "${YELLOW}[-]${NC} No specific P4 or P40 profiles detected"
-                            echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few more minutes"
+                            echo -e "${YELLOW}[-]${NC} No vGPU types detected on attempt $((retry_count + 1))"
                         fi
+                        
+                        retry_count=$((retry_count + 1))
+                    done
+                    
+                    # Final assessment with clear messaging
+                    if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
+                        echo -e "${GREEN}[+]${NC} Tesla P4 fix applied successfully - P4 profiles are now visible"
+                        echo -e "${GREEN}[+]${NC} P40 profiles have been correctly replaced with P4 profiles"
+                    elif [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = true ]; then
+                        echo -e "${YELLOW}[-]${NC} Partial success: P4 profiles found, but P40 profiles still present"
+                        echo -e "${YELLOW}[-]${NC} This may indicate multiple GPUs or configuration conflict"
+                        echo -e "${YELLOW}[-]${NC} Try: systemctl restart nvidia-vgpu-mgr.service && sleep 20 && mdevctl types"
+                    elif [ "$p40_profiles_found" = true ]; then
+                        echo -e "${RED}[!]${NC} Tesla P4 fix may not have worked - still showing P40 profiles"
+                        echo -e "${YELLOW}[-]${NC} Configuration was applied but services may need more time or a system reboot"
+                        echo -e "${YELLOW}[-]${NC} Try: systemctl stop nvidia-vgpu-mgr nvidia-vgpud && sleep 10 && systemctl start nvidia-vgpud nvidia-vgpu-mgr"
                     else
-                        echo -e "${YELLOW}[-]${NC} No vGPU types detected yet"
-                        echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few minutes or after a reboot"
+                        if [ $retry_count -eq $max_retries ]; then
+                            echo -e "${YELLOW}[-]${NC} No specific P4 or P40 profiles detected after $max_retries attempts"
+                            echo -e "${YELLOW}[-]${NC} Services may need more time to initialize or a system reboot may be required"
+                            echo -e "${YELLOW}[-]${NC} Try waiting 2-3 minutes and then run: mdevctl types"
+                        else
+                            echo -e "${YELLOW}[-]${NC} No specific P4 or P40 profiles detected - this may be normal during initialization"
+                        fi
                     fi
                 else
                     echo -e "${YELLOW}[-]${NC} mdevctl not found, cannot verify vGPU types immediately"
@@ -581,56 +647,129 @@ apply_tesla_p4_fix() {
                         echo -e "${GREEN}[+]${NC} Confirmed: No P40 references found in configuration"
                     fi
                     
-                    # Restart nvidia-vgpu-mgr.service to load new configuration
-                    echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
-                    if systemctl restart nvidia-vgpu-mgr.service; then
-                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
-                        sleep 10
+                    # Enhanced service restart sequence for fallback configuration
+                    echo -e "${YELLOW}[-]${NC} Restarting NVIDIA services to load new fallback configuration"
+                    
+                    # Stop services in reverse order first
+                    echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpu-mgr.service..."
+                    systemctl stop nvidia-vgpu-mgr.service 2>/dev/null || true
+                    
+                    echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpud.service..."
+                    systemctl stop nvidia-vgpud.service 2>/dev/null || true
+                    
+                    # Wait for services to fully stop
+                    echo -e "${YELLOW}[-]${NC} Waiting for services to fully stop..."
+                    sleep 5
+                    
+                    # Clear any potential driver cache (if nvidia-modprobe is available)
+                    if command -v nvidia-modprobe >/dev/null 2>&1; then
+                        echo -e "${YELLOW}[-]${NC} Clearing NVIDIA kernel module cache..."
+                        modprobe -r nvidia_vgpu_vfio nvidia 2>/dev/null || true
+                        sleep 2
+                        modprobe nvidia 2>/dev/null || true
+                    fi
+                    
+                    # Start services in correct order
+                    echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpud.service..."
+                    if systemctl start nvidia-vgpud.service; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpud.service started successfully"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to start nvidia-vgpud.service"
+                    fi
+                    
+                    # Wait before starting the manager service
+                    sleep 5
+                    
+                    echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpu-mgr.service..."
+                    if systemctl start nvidia-vgpu-mgr.service; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service started successfully"
                         
-                        # Also restart nvidia-vgpud service to ensure complete reload
-                        echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpud.service to ensure complete configuration reload"
-                        systemctl restart nvidia-vgpud.service 2>/dev/null || echo -e "${YELLOW}[-]${NC} nvidia-vgpud.service restart skipped (may not be running)"
-                        sleep 5
+                        # Give services more time to fully initialize and load configuration
+                        echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to fully initialize with new configuration..."
+                        sleep 15
                         
-                        # Verify the fix worked with fallback
+                        # Additional verification that the service is actually running
+                        if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
+                            echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service is running and active"
+                        else
+                            echo -e "${YELLOW}[-]${NC} Warning: nvidia-vgpu-mgr.service may not be fully initialized"
+                        fi
+                    else
+                        echo -e "${RED}[!]${NC} Failed to start nvidia-vgpu-mgr.service"
+                        echo -e "${YELLOW}[-]${NC} Trying restart instead of start..."
+                        if systemctl restart nvidia-vgpu-mgr.service; then
+                            echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                            sleep 10
+                        else
+                            echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service"
+                            fallback_result=1
+                        fi
+                    fi
+                    
+                    # Only proceed with verification if service restart was successful
+                    if [ $fallback_result -eq 0 ]; then
+                        # Enhanced verification for fallback config with retry logic
                         echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available (fallback config)..."
                         if command -v mdevctl >/dev/null 2>&1; then
                             local mdev_output
                             local p4_profiles_found=false
                             local p40_profiles_found=false
+                            local retry_count=0
+                            local max_retries=3
                             
-                            # Get all mdevctl output
-                            mdev_output=$(timeout 20 mdevctl types 2>/dev/null || true)
-                            
-                            if [ -n "$mdev_output" ]; then
-                                # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
-                                if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
-                                    p4_profiles_found=true
-                                    echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available (using fallback config):"
-                                    echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                            # Retry verification with increasing delays
+                            while [ $retry_count -lt $max_retries ] && [ "$p4_profiles_found" = false ]; do
+                                if [ $retry_count -gt 0 ]; then
+                                    echo -e "${YELLOW}[-]${NC} Verification attempt $((retry_count + 1)) of $max_retries (fallback config)..."
+                                    sleep $((retry_count * 10))  # 10, 20, 30 seconds
                                 fi
                                 
-                                # Check if P40 profiles are still showing (this indicates the fix didn't work)
-                                if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
-                                    p40_profiles_found=true
-                                    echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected (fallback config may not have been applied correctly):"
-                                    echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                                # Get all mdevctl output with extended timeout
+                                mdev_output=$(timeout 30 mdevctl types 2>/dev/null || true)
+                                
+                                if [ -n "$mdev_output" ]; then
+                                    # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
+                                    if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
+                                        p4_profiles_found=true
+                                        echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available (using fallback config):"
+                                        echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                                    fi
+                                    
+                                    # Check if P40 profiles are still showing (this indicates the fix didn't work)
+                                    if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
+                                        p40_profiles_found=true
+                                        echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected (fallback config may not have been applied correctly):"
+                                        echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                                    fi
+                                else
+                                    echo -e "${YELLOW}[-]${NC} No vGPU types detected on attempt $((retry_count + 1)) (fallback config)"
                                 fi
                                 
-                                if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
-                                    echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration applied successfully"
-                                    echo -e "${YELLOW}[-]${NC} Note: Using fallback configuration. For optimal performance, manually apply official config later."
-                                elif [ "$p40_profiles_found" = true ]; then
-                                    echo -e "${RED}[!]${NC} Tesla P4 fallback fix may not have worked - still showing P40 profiles"
-                                    echo -e "${YELLOW}[-]${NC} The fallback configuration was applied, but the system is still loading incorrect profiles"
-                                    echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting the system"
+                                retry_count=$((retry_count + 1))
+                            done
+                            
+                            # Final assessment for fallback config
+                            if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
+                                echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration applied successfully"
+                                echo -e "${YELLOW}[-]${NC} Note: Using fallback configuration. For optimal performance, manually apply official config later."
+                            elif [ "$p40_profiles_found" = true ]; then
+                                echo -e "${RED}[!]${NC} Tesla P4 fallback fix may not have worked - still showing P40 profiles"
+                                echo -e "${YELLOW}[-]${NC} The fallback configuration was applied, but the system is still loading incorrect profiles"
+                                echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting the system"
+                                echo -e "${YELLOW}[-]${NC} Additional commands to try:"
+                                echo -e "${YELLOW}[-]${NC}   systemctl stop nvidia-vgpu-mgr nvidia-vgpud"
+                                echo -e "${YELLOW}[-]${NC}   sleep 10"
+                                echo -e "${YELLOW}[-]${NC}   systemctl start nvidia-vgpud nvidia-vgpu-mgr"
+                                echo -e "${YELLOW}[-]${NC}   sleep 20 && mdevctl types"
+                            else
+                                if [ $retry_count -eq $max_retries ]; then
+                                    echo -e "${YELLOW}[-]${NC} Fallback config applied, but no P4 or P40 profiles detected after $max_retries attempts"
+                                    echo -e "${YELLOW}[-]${NC} Services may need more time to initialize or a system reboot may be required"
+                                    echo -e "${YELLOW}[-]${NC} Try waiting 2-3 minutes and then run: mdevctl types"
                                 else
                                     echo -e "${YELLOW}[-]${NC} Fallback config applied, but no P4 or P40 profiles detected yet"
                                     echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few minutes or after a reboot"
                                 fi
-                            else
-                                echo -e "${YELLOW}[-]${NC} Fallback config applied, but vGPU types not yet visible"
-                                echo -e "${YELLOW}[-]${NC} Try 'mdevctl types' after a few minutes or reboot"
                             fi
                         fi
                         
@@ -639,7 +778,7 @@ apply_tesla_p4_fix() {
                         
                         echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration fix completed"
                     else
-                        echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service"
+                        echo -e "${YELLOW}[-]${NC} Warning: Service restart failed, skipping verification"
                         fallback_result=1
                     fi
                 else
