@@ -232,7 +232,12 @@ EOF
 
 # Function to download and extract vgpuConfig.xml from driver 16.4
 download_tesla_p4_config() {
-    local p4_driver_url="https://mega.nz/file/RvsyyBaB#7fe_caaJkBHYC6rgFKtiZdZKkAvp7GNjCSa8ufzkG20"
+    # Array of alternative download URLs for NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run
+    local p4_driver_urls=(
+        "https://mega.nz/file/RvsyyBaB#7fe_caaJkBHYC6rgFKtiZdZKkAvp7GNjCSa8ufzkG20"
+        "https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.4/NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
+        "https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.4/NVIDIA-Linux-x86_64-535.161.07-vgpu-kvm.run"
+    )
     local p4_driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
     local p4_driver_md5="bad6e09aeb58942750479f091bb9c4b6"
     
@@ -262,34 +267,77 @@ download_tesla_p4_config() {
         local download_success=false
         local max_retries=3
         local retry_count=0
+        local url_index=0
+        local total_urls=${#p4_driver_urls[@]}
         
-        # Method 1: Try megadl first
-        if command -v megadl >/dev/null 2>&1; then
-            echo -e "${YELLOW}[-]${NC} Attempting download using megadl (method 1/3)"
-            while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
-                retry_count=$((retry_count + 1))
-                echo -e "${YELLOW}[-]${NC} Download attempt $retry_count of $max_retries..."
-                
-                if timeout 300 megadl "$p4_driver_url" 2>/dev/null; then
-                    if [ -f "$p4_driver_filename" ]; then
-                        download_success=true
-                        echo -e "${GREEN}[+]${NC} Successfully downloaded using megadl"
-                        break
+        # Try each URL with retries
+        while [ $url_index -lt $total_urls ] && [ "$download_success" = false ]; do
+            local current_url="${p4_driver_urls[$url_index]}"
+            retry_count=0
+            
+            # Special handling for Mega.nz URLs (requires megadl)
+            if [[ "$current_url" == *"mega.nz"* ]]; then
+                if command -v megadl >/dev/null 2>&1; then
+                    echo -e "${YELLOW}[-]${NC} Attempting download using megadl from Mega.nz (method $((url_index+1))/$total_urls)"
+                    while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
+                        retry_count=$((retry_count + 1))
+                        echo -e "${YELLOW}[-]${NC} Download attempt $retry_count of $max_retries..."
+                        
+                        if timeout 300 megadl "$current_url" 2>/dev/null; then
+                            if [ -f "$p4_driver_filename" ]; then
+                                download_success=true
+                                echo -e "${GREEN}[+]${NC} Successfully downloaded using megadl"
+                                break
+                            fi
+                        fi
+                        
+                        if [ $retry_count -lt $max_retries ]; then
+                            echo -e "${YELLOW}[-]${NC} Download failed, retrying in 5 seconds..."
+                            sleep 5
+                        fi
+                    done
+                else
+                    echo -e "${YELLOW}[-]${NC} Skipping Mega.nz URL (method $((url_index+1))/$total_urls) - megadl not available"
+                fi
+            else
+                # Try with wget/curl for standard HTTP URLs
+                echo -e "${YELLOW}[-]${NC} Attempting download using HTTP (method $((url_index+1))/$total_urls)"
+                while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
+                    retry_count=$((retry_count + 1))
+                    echo -e "${YELLOW}[-]${NC} Download attempt $retry_count of $max_retries from: $(echo "$current_url" | cut -c1-60)..."
+                    
+                    if command -v wget >/dev/null 2>&1; then
+                        if timeout 600 wget -q --tries=1 --timeout=60 "$current_url" -O "$p4_driver_filename" 2>/dev/null; then
+                            if [ -f "$p4_driver_filename" ] && [ -s "$p4_driver_filename" ]; then
+                                download_success=true
+                                echo -e "${GREEN}[+]${NC} Successfully downloaded using wget"
+                                break
+                            fi
+                        fi
+                    elif command -v curl >/dev/null 2>&1; then
+                        if timeout 600 curl -L --retry 1 --max-time 60 --silent "$current_url" -o "$p4_driver_filename" 2>/dev/null; then
+                            if [ -f "$p4_driver_filename" ] && [ -s "$p4_driver_filename" ]; then
+                                download_success=true
+                                echo -e "${GREEN}[+]${NC} Successfully downloaded using curl"
+                                break
+                            fi
+                        fi
                     fi
-                fi
-                
-                if [ $retry_count -lt $max_retries ]; then
-                    echo -e "${YELLOW}[-]${NC} Download failed, retrying in 5 seconds..."
-                    sleep 5
-                fi
-            done
-        else
-            echo -e "${YELLOW}[-]${NC} megadl not available, trying alternative methods"
-        fi
+                    
+                    if [ $retry_count -lt $max_retries ]; then
+                        echo -e "${YELLOW}[-]${NC} Download failed, retrying in 5 seconds..."
+                        sleep 5
+                    fi
+                done
+            fi
+            
+            url_index=$((url_index + 1))
+        done
         
-        # Method 2: Try alternative download sources if megadl fails
+        
+        # Method: Check if we can use an already downloaded file in the main directory
         if [ "$download_success" = false ]; then
-            echo -e "${YELLOW}[-]${NC} Primary download failed, trying fallback methods..."
+            echo -e "${YELLOW}[-]${NC} All download methods failed, checking for existing driver file..."
             
             # Check if we can use an already downloaded file in the main directory
             if [ -f "$VGPU_DIR/$p4_driver_filename" ]; then
@@ -304,12 +352,14 @@ download_tesla_p4_config() {
         
         # Final check if download succeeded
         if [ "$download_success" = false ] || [ ! -f "$p4_driver_filename" ]; then
-            echo -e "${RED}[!]${NC} Failed to download Tesla P4 driver after multiple attempts"
+            echo -e "${RED}[!]${NC} Failed to download Tesla P4 driver after multiple attempts from all sources"
             echo -e "${YELLOW}[-]${NC} Troubleshooting steps:"
             echo -e "${YELLOW}[-]${NC} 1. Check internet connectivity: ping -c 3 google.com"
             echo -e "${YELLOW}[-]${NC} 2. Install megatools if missing: apt install megatools"
-            echo -e "${YELLOW}[-]${NC} 3. Manually download driver 16.4 to: $VGPU_DIR/"
-            echo -e "${YELLOW}[-]${NC} 4. Or run: wget -O $VGPU_DIR/$p4_driver_filename [alternate_url]"
+            echo -e "${YELLOW}[-]${NC} 3. Manually download driver 16.4 from alternative sources:"
+            echo -e "${YELLOW}[-]${NC}    - Official NVIDIA: Check NVIDIA Enterprise download portal"
+            echo -e "${YELLOW}[-]${NC}    - Community sources: Check vGPU Unlocking Discord for current links"
+            echo -e "${YELLOW}[-]${NC} 4. Place downloaded file as: $VGPU_DIR/$p4_driver_filename"
             cd "$VGPU_DIR" || true
             return 1
         fi
@@ -507,11 +557,38 @@ apply_tesla_p4_fix() {
                         echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available (fallback config)..."
                         if command -v mdevctl >/dev/null 2>&1; then
                             local mdev_output
-                            mdev_output=$(timeout 15 mdevctl types 2>/dev/null | grep -i "grid\|tesla\|p4" || true)
+                            local p4_profiles_found=false
+                            local p40_profiles_found=false
+                            
+                            # Get all mdevctl output
+                            mdev_output=$(timeout 20 mdevctl types 2>/dev/null || true)
+                            
                             if [ -n "$mdev_output" ]; then
-                                echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available (using fallback config):"
-                                echo "$mdev_output" | head -5 | sed 's/^/  /'
-                                echo -e "${YELLOW}[-]${NC} Note: Using fallback configuration. For optimal performance, manually apply official config later."
+                                # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
+                                if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
+                                    p4_profiles_found=true
+                                    echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available (using fallback config):"
+                                    echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                                fi
+                                
+                                # Check if P40 profiles are still showing (this indicates the fix didn't work)
+                                if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
+                                    p40_profiles_found=true
+                                    echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected (fallback config may not have been applied correctly):"
+                                    echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                                fi
+                                
+                                if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
+                                    echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration applied successfully"
+                                    echo -e "${YELLOW}[-]${NC} Note: Using fallback configuration. For optimal performance, manually apply official config later."
+                                elif [ "$p40_profiles_found" = true ]; then
+                                    echo -e "${RED}[!]${NC} Tesla P4 fallback fix may not have worked - still showing P40 profiles"
+                                    echo -e "${YELLOW}[-]${NC} The fallback configuration was applied, but the system is still loading incorrect profiles"
+                                    echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting the system"
+                                else
+                                    echo -e "${YELLOW}[-]${NC} Fallback config applied, but no P4 or P40 profiles detected yet"
+                                    echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few minutes or after a reboot"
+                                fi
                             else
                                 echo -e "${YELLOW}[-]${NC} Fallback config applied, but vGPU types not yet visible"
                                 echo -e "${YELLOW}[-]${NC} Try 'mdevctl types' after a few minutes or reboot"
