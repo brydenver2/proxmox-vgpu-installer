@@ -118,372 +118,6 @@ show_tesla_p4_troubleshooting() {
     echo ""
 }
 
-# Function to display usage information
-display_usage() {
-    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help] [--tesla-p4-status]"
-    echo -e ""
-    echo -e "Options:"
-    echo -e "  --debug               Enable debug mode with verbose output"
-    echo -e "  --verbose             Enable verbose logging for diagnostics"
-    echo -e "  --step <number>       Jump to specific installation step"
-    echo -e "  --url <url>           Use custom driver download URL"
-    echo -e "  --file <file>         Use local driver file"
-    echo -e "  --tesla-p4-fix        Run Tesla P4 vGPU configuration fix only"
-    echo -e "  --tesla-p4-help       Show Tesla P4 troubleshooting guide"
-    echo -e "  --tesla-p4-status     Check Tesla P4 vGPU profile status"
-    echo -e ""
-    exit 1
-}
-
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --debug)
-            DEBUG=true
-            VERBOSE=true  # Debug mode implies verbose
-            shift
-            ;;
-        --verbose)
-            VERBOSE=true
-            shift
-            ;;
-        --step)
-            STEP="$2"
-            shift 2
-            ;;
-        --url)
-            URL="$2"
-            echo "URL=$URL" >> "$VGPU_DIR/$CONFIG_FILE"
-            shift 2
-            ;;
-        --file)
-            FILE="$2"
-            echo "FILE=$FILE" >> "$VGPU_DIR/$CONFIG_FILE"
-            shift 2
-            ;;
-        --tesla-p4-fix)
-            # Run Tesla P4 fix only
-            echo ""
-            echo -e "${BLUE}Tesla P4 vGPU Configuration Fix${NC}"
-            echo -e "${BLUE}================================${NC}"
-            echo ""
-            if detect_tesla_p4; then
-                apply_tesla_p4_fix
-            else
-                echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
-                echo -e "${YELLOW}[-]${NC} This fix is only applicable to systems with Tesla P4 GPUs (device ID 1bb3)"
-            fi
-            exit 0
-            ;;
-        --tesla-p4-status)
-            # Check Tesla P4 status
-            echo ""
-            echo -e "${BLUE}Tesla P4 vGPU Status Check${NC}"
-            echo -e "${BLUE}==========================${NC}"
-            echo ""
-            
-            # Check if Tesla P4 is detected
-            if detect_tesla_p4; then
-                echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected (device ID: 1bb3)"
-                
-                # Check if NVIDIA services are running
-                if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
-                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service is active"
-                else
-                    echo -e "${YELLOW}[-]${NC} nvidia-vgpu-mgr.service is not active"
-                fi
-                
-                # Check vgpuConfig.xml
-                if [ -f "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
-                    echo -e "${GREEN}[+]${NC} vgpuConfig.xml found at /usr/share/nvidia/vgpu/"
-                    if grep -q "1BB3\|1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
-                        echo -e "${GREEN}[+]${NC} Configuration contains Tesla P4 device ID (1BB3)"
-                    else
-                        echo -e "${YELLOW}[-]${NC} Configuration may not contain Tesla P4 device ID"
-                    fi
-                else
-                    echo -e "${YELLOW}[-]${NC} vgpuConfig.xml not found - NVIDIA driver may not be installed"
-                fi
-                
-                # Check mdevctl output
-                echo ""
-                echo -e "${YELLOW}[-]${NC} Checking vGPU types..."
-                if command -v mdevctl >/dev/null 2>&1; then
-                    local mdev_output=$(mdevctl types 2>/dev/null || true)
-                    if [ -n "$mdev_output" ]; then
-                        local p4_found=false
-                        local p40_found=false
-                        
-                        if echo "$mdev_output" | grep -q "GRID P4-"; then
-                            p4_found=true
-                            echo -e "${GREEN}[+]${NC} Tesla P4 profiles found:"
-                            echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
-                        fi
-                        
-                        if echo "$mdev_output" | grep -q "GRID P40-"; then
-                            p40_found=true
-                            echo -e "${YELLOW}[-]${NC} P40 profiles detected (this may be the issue):"
-                            echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
-                        fi
-                        
-                        if [ "$p4_found" = true ] && [ "$p40_found" = false ]; then
-                            echo -e "${GREEN}[+]${NC} Status: Tesla P4 is working correctly - P4 profiles visible"
-                        elif [ "$p40_found" = true ]; then
-                            echo -e "${RED}[!]${NC} Status: Tesla P4 fix needed - P40 profiles are showing"
-                            echo -e "${YELLOW}[-]${NC} Run: $0 --tesla-p4-fix to apply the fix"
-                        else
-                            echo -e "${YELLOW}[-]${NC} Status: No P4/P40 profiles found"
-                        fi
-                    else
-                        echo -e "${YELLOW}[-]${NC} No vGPU types found - services may not be running"
-                    fi
-                else
-                    echo -e "${YELLOW}[-]${NC} mdevctl command not found"
-                fi
-            else
-                echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
-                echo -e "${YELLOW}[-]${NC} This check is only for systems with Tesla P4 GPUs (device ID 1bb3)"
-            fi
-            echo ""
-            exit 0
-            ;;
-        --tesla-p4-help)
-            show_tesla_p4_troubleshooting
-            exit 0
-            ;;
-        *)
-            # Unknown option
-            display_usage
-            ;;
-    esac
-done
-
-# Function to write to log file
-write_log() {
-    local message="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] $message" >> "$VGPU_DIR/$LOG_FILE"
-}
-
-# Function to log system information for diagnostics
-log_system_info() {
-    local section="$1"
-    write_log "=== SYSTEM INFO: $section ==="
-    
-    case "$section" in
-        "initial")
-            write_log "Script version: $SCRIPT_VERSION"
-            write_log "Working directory: $VGPU_DIR"
-            write_log "Log file: $VGPU_DIR/$LOG_FILE"
-            write_log "Debug mode: $DEBUG"
-            write_log "Verbose mode: $VERBOSE"
-            write_log "Current user: $(whoami)"
-            write_log "Current date: $(date)"
-            write_log "Kernel version: $(uname -r)"
-            write_log "Distribution: $(lsb_release -d 2>/dev/null || echo 'Unknown')"
-            write_log "Architecture: $(uname -m)"
-            write_log "Available memory: $(free -h | grep Mem | awk '{print $2}')"
-            write_log "Available disk space: $(df -h $VGPU_DIR | tail -1 | awk '{print $4}')"
-            ;;
-        "gpu")
-            write_log "GPU Information:"
-            lspci -nn | grep -i nvidia >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No NVIDIA GPUs found"
-            lspci -nn | grep -Ei '(VGA compatible controller|3D controller)' >> "$VGPU_DIR/$LOG_FILE" 2>&1
-            ;;
-        "kernel")
-            write_log "Kernel and module information:"
-            write_log "Running kernel: $(uname -r)"
-            write_log "Available kernels:"
-            find /boot -name "vmlinuz-*" -exec basename {} \; | sort >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "Could not list kernels"
-            write_log "Loaded NVIDIA modules:"
-            lsmod | grep nvidia >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No NVIDIA modules loaded"
-            ;;
-        "services")
-            write_log "Service status information:"
-            systemctl status nvidia-vgpud.service >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-vgpud.service not found"
-            systemctl status nvidia-vgpu-mgr.service >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-vgpu-mgr.service not found"
-            ;;
-        "driver")
-            write_log "Driver status information:"
-            nvidia-smi >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-smi not available or failed"
-            nvidia-smi vgpu >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-smi vgpu not available or failed"
-            mdevctl types >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "mdevctl not available or no vGPU types found"
-            ;;
-        "iommu")
-            write_log "IOMMU status:"
-            dmesg | grep -i iommu >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No IOMMU messages found"
-            if [ -d "/sys/class/iommu" ]; then
-                ls -la /sys/class/iommu/ >> "$VGPU_DIR/$LOG_FILE" 2>&1
-            else
-                write_log "IOMMU not available"
-            fi
-            ;;
-    esac
-    
-    write_log "=== END SYSTEM INFO: $section ==="
-}
-
-# Function to run a command with specified description and log level
-run_command() {
-    local description="$1"
-    local log_level="$2"
-    local command="$3"
-    local exit_on_error="${4:-true}"  # Default to exit on error
-    local show_output="${5:-false}"   # Default to hide output unless verbose
-
-    case "$log_level" in
-        "info")
-            echo -e "${GREEN}[+]${NC} ${description}"
-            ;;
-        "notification")
-            echo -e "${YELLOW}[-]${NC} ${description}"
-            ;;
-        "error")
-            echo -e "${RED}[!]${NC} ${description}"
-            ;;
-        *)
-            echo -e "[?] ${description}"
-            ;;
-    esac
-
-    # Log command being executed
-    write_log "$log_level: $description"
-    write_log "COMMAND: $command"
-
-    # Show verbose output if requested or if debug/verbose mode is enabled
-    if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ] || [ "$show_output" = "true" ]; then
-        echo -e "${GRAY}[DEBUG] Executing: $command${NC}"
-        eval "$command" 2>&1 | tee -a "$VGPU_DIR/$LOG_FILE"
-        local exit_code=${PIPESTATUS[0]}
-    else
-        eval "$command" >> "$VGPU_DIR/$LOG_FILE" 2>&1
-        local exit_code=$?
-    fi
-
-    # Log command result
-    write_log "EXIT_CODE: $exit_code"
-    
-    if [ $exit_code -ne 0 ]; then
-        echo -e "${RED}[!]${NC} Command failed with exit code: $exit_code"
-        write_log "ERROR: Command '$command' failed with exit code $exit_code"
-        
-        if [ "$VERBOSE" = "true" ]; then
-            echo -e "${GRAY}[DEBUG] Last 10 lines from log file:${NC}"
-            tail -10 "$VGPU_DIR/$LOG_FILE" | sed 's/^/  /'
-        fi
-        
-        if [ "$exit_on_error" = "true" ]; then
-            echo -e "${RED}[!]${NC} Installation failed. Check $VGPU_DIR/$LOG_FILE for details."
-            echo -e "${YELLOW}[-]${NC} Run with --verbose flag for more detailed output."
-            exit $exit_code
-        fi
-    else
-        write_log "SUCCESS: Command completed successfully"
-    fi
-    
-    return $exit_code
-}
-
-# Check Proxmox version
-pve_info=$(pveversion)
-version=$(echo "$pve_info" | sed -n 's/^pve-manager\/\([0-9.]*\).*$/\1/p')
-#version=7.4-15
-#version=8.1.4
-kernel=$(echo "$pve_info" | sed -n 's/^.*kernel: \([0-9.-]*pve\).*$/\1/p')
-major_version=$(echo "$version" | sed 's/\([0-9]*\).*/\1/')
-
-# Function to map filename to driver version and patch
-map_filename_to_version() {
-    local filename="$1"
-    if [[ "$filename" =~ ^(NVIDIA-Linux-x86_64-535\.54\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.104\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.129\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.183\.04-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.216\.01-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.230\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.10-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.16-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.90\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.127\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.144\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.163\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.124\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.133\.10-vgpu-kvm\.run)$ ]]; then
-        case "$filename" in
-            NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run)
-                driver_version="16.0"
-                driver_patch="535.54.06.patch"
-                md5="b892f75f8522264bc176f5a555acb176"
-                ;;
-            NVIDIA-Linux-x86_64-535.104.06-vgpu-kvm.run)
-                driver_version="16.1"
-                driver_patch="535.104.06.patch"
-                md5="1020ad5b89fa0570c27786128385ca48"
-                ;;
-            NVIDIA-Linux-x86_64-535.129.03-vgpu-kvm.run)
-                driver_version="16.2"
-                driver_patch="535.129.03.patch"
-                md5="0048208a62bacd2a7dd12fa736aa5cbb"
-                ;;
-            NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run)
-                driver_version="16.4"
-                driver_patch="535.161.05.patch"
-                md5="bad6e09aeb58942750479f091bb9c4b6"
-                ;;
-            NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run)
-                driver_version="16.5"
-                driver_patch="535.161.05.patch"
-                md5="bad6e09aeb58942750479f091bb9c4b6"
-                ;;
-            NVIDIA-Linux-x86_64-535.183.04-vgpu-kvm.run)
-                driver_version="16.7"
-                driver_patch="535.183.04.patch"
-                md5="68961f01a2332b613fe518afd4bfbfb2"
-                ;;
-            NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run)
-                driver_version="16.8"
-                driver_patch="535.216.01.patch"
-                md5="18627628e749f893cd2c3635452006a46"
-                ;;
-            NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run)
-                driver_version="16.9"
-                driver_patch="535.230.02.patch"
-                md5="3f6412723880aa5720b44cf0a9a13009"
-                ;;
-            NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run)
-                driver_version="17.0"
-                driver_patch="550.54.10.patch"
-                md5="5f5e312cbd5bb64946e2a1328a98c08d"
-                ;;
-            NVIDIA-Linux-x86_64-550.54.16-vgpu-kvm.run)
-                driver_version="17.1"
-                driver_patch="550.54.16.patch"
-                md5="4d78514599c16302a0111d355dbf11e3"
-                ;;
-            NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm.run)
-                driver_version="17.3"
-                driver_patch="550.90.05.patch"
-                md5="a3cddad85eee74dc15dbadcbe30dcf3a"
-                ;;
-            NVIDIA-Linux-x86_64-550.127.06-vgpu-kvm.run)
-                driver_version="17.4"
-                driver_patch="550.127.06.patch"
-                md5="400b1b2841908ea36fd8f7fdbec18401"
-                ;;
-            NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run)
-                driver_version="17.5"
-                driver_patch="550.144.02.patch"
-                md5="37016ba868a0b4390c38aebbacfba09e"
-                ;;
-            NVIDIA-Linux-x86_64-550.163.02-vgpu-kvm.run)
-                driver_version="17.6"
-                driver_patch="550.163.10.patch"
-                md5="093036d83baf879a4bb667b484597789"
-                ;;
-            NVIDIA-Linux-x86_64-570.124.03-vgpu-kvm.run)
-                driver_version="18.0"
-                driver_patch="570.124.03.patch"
-                md5="1804b889e27b7f868afb5521d871b095"
-                ;;
-            NVIDIA-Linux-x86_64-570.133.10-vgpu-kvm.run)
-                driver_version="18.1"
-                driver_patch="570.133.10.patch"
-                md5="f435eacdbe3c8002ccad14bd62c9bd2d"
-                ;;
-        esac
-        return 0  # Return true
-    else
-        return 1  # Return false
-    fi
-}
-
 # Function to check network connectivity
 check_network_connectivity() {
     echo -e "${YELLOW}[-]${NC} Checking network connectivity for Tesla P4 fix..."
@@ -914,6 +548,372 @@ apply_tesla_p4_fix() {
             fi
         fi
         echo ""
+    fi
+}
+
+# Function to display usage information
+display_usage() {
+    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help] [--tesla-p4-status]"
+    echo -e ""
+    echo -e "Options:"
+    echo -e "  --debug               Enable debug mode with verbose output"
+    echo -e "  --verbose             Enable verbose logging for diagnostics"
+    echo -e "  --step <number>       Jump to specific installation step"
+    echo -e "  --url <url>           Use custom driver download URL"
+    echo -e "  --file <file>         Use local driver file"
+    echo -e "  --tesla-p4-fix        Run Tesla P4 vGPU configuration fix only"
+    echo -e "  --tesla-p4-help       Show Tesla P4 troubleshooting guide"
+    echo -e "  --tesla-p4-status     Check Tesla P4 vGPU profile status"
+    echo -e ""
+    exit 1
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --debug)
+            DEBUG=true
+            VERBOSE=true  # Debug mode implies verbose
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --step)
+            STEP="$2"
+            shift 2
+            ;;
+        --url)
+            URL="$2"
+            echo "URL=$URL" >> "$VGPU_DIR/$CONFIG_FILE"
+            shift 2
+            ;;
+        --file)
+            FILE="$2"
+            echo "FILE=$FILE" >> "$VGPU_DIR/$CONFIG_FILE"
+            shift 2
+            ;;
+        --tesla-p4-fix)
+            # Run Tesla P4 fix only
+            echo ""
+            echo -e "${BLUE}Tesla P4 vGPU Configuration Fix${NC}"
+            echo -e "${BLUE}================================${NC}"
+            echo ""
+            if detect_tesla_p4; then
+                apply_tesla_p4_fix
+            else
+                echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
+                echo -e "${YELLOW}[-]${NC} This fix is only applicable to systems with Tesla P4 GPUs (device ID 1bb3)"
+            fi
+            exit 0
+            ;;
+        --tesla-p4-status)
+            # Check Tesla P4 status
+            echo ""
+            echo -e "${BLUE}Tesla P4 vGPU Status Check${NC}"
+            echo -e "${BLUE}==========================${NC}"
+            echo ""
+            
+            # Check if Tesla P4 is detected
+            if detect_tesla_p4; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected (device ID: 1bb3)"
+                
+                # Check if NVIDIA services are running
+                if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
+                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service is active"
+                else
+                    echo -e "${YELLOW}[-]${NC} nvidia-vgpu-mgr.service is not active"
+                fi
+                
+                # Check vgpuConfig.xml
+                if [ -f "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                    echo -e "${GREEN}[+]${NC} vgpuConfig.xml found at /usr/share/nvidia/vgpu/"
+                    if grep -q "1BB3\|1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${GREEN}[+]${NC} Configuration contains Tesla P4 device ID (1BB3)"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Configuration may not contain Tesla P4 device ID"
+                    fi
+                else
+                    echo -e "${YELLOW}[-]${NC} vgpuConfig.xml not found - NVIDIA driver may not be installed"
+                fi
+                
+                # Check mdevctl output
+                echo ""
+                echo -e "${YELLOW}[-]${NC} Checking vGPU types..."
+                if command -v mdevctl >/dev/null 2>&1; then
+                    local mdev_output=$(mdevctl types 2>/dev/null || true)
+                    if [ -n "$mdev_output" ]; then
+                        local p4_found=false
+                        local p40_found=false
+                        
+                        if echo "$mdev_output" | grep -q "GRID P4-"; then
+                            p4_found=true
+                            echo -e "${GREEN}[+]${NC} Tesla P4 profiles found:"
+                            echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                        fi
+                        
+                        if echo "$mdev_output" | grep -q "GRID P40-"; then
+                            p40_found=true
+                            echo -e "${YELLOW}[-]${NC} P40 profiles detected (this may be the issue):"
+                            echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                        fi
+                        
+                        if [ "$p4_found" = true ] && [ "$p40_found" = false ]; then
+                            echo -e "${GREEN}[+]${NC} Status: Tesla P4 is working correctly - P4 profiles visible"
+                        elif [ "$p40_found" = true ]; then
+                            echo -e "${RED}[!]${NC} Status: Tesla P4 fix needed - P40 profiles are showing"
+                            echo -e "${YELLOW}[-]${NC} Run: $0 --tesla-p4-fix to apply the fix"
+                        else
+                            echo -e "${YELLOW}[-]${NC} Status: No P4/P40 profiles found"
+                        fi
+                    else
+                        echo -e "${YELLOW}[-]${NC} No vGPU types found - services may not be running"
+                    fi
+                else
+                    echo -e "${YELLOW}[-]${NC} mdevctl command not found"
+                fi
+            else
+                echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
+                echo -e "${YELLOW}[-]${NC} This check is only for systems with Tesla P4 GPUs (device ID 1bb3)"
+            fi
+            echo ""
+            exit 0
+            ;;
+        --tesla-p4-help)
+            show_tesla_p4_troubleshooting
+            exit 0
+            ;;
+        *)
+            # Unknown option
+            display_usage
+            ;;
+    esac
+done
+
+# Function to write to log file
+write_log() {
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $message" >> "$VGPU_DIR/$LOG_FILE"
+}
+
+# Function to log system information for diagnostics
+log_system_info() {
+    local section="$1"
+    write_log "=== SYSTEM INFO: $section ==="
+    
+    case "$section" in
+        "initial")
+            write_log "Script version: $SCRIPT_VERSION"
+            write_log "Working directory: $VGPU_DIR"
+            write_log "Log file: $VGPU_DIR/$LOG_FILE"
+            write_log "Debug mode: $DEBUG"
+            write_log "Verbose mode: $VERBOSE"
+            write_log "Current user: $(whoami)"
+            write_log "Current date: $(date)"
+            write_log "Kernel version: $(uname -r)"
+            write_log "Distribution: $(lsb_release -d 2>/dev/null || echo 'Unknown')"
+            write_log "Architecture: $(uname -m)"
+            write_log "Available memory: $(free -h | grep Mem | awk '{print $2}')"
+            write_log "Available disk space: $(df -h $VGPU_DIR | tail -1 | awk '{print $4}')"
+            ;;
+        "gpu")
+            write_log "GPU Information:"
+            lspci -nn | grep -i nvidia >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No NVIDIA GPUs found"
+            lspci -nn | grep -Ei '(VGA compatible controller|3D controller)' >> "$VGPU_DIR/$LOG_FILE" 2>&1
+            ;;
+        "kernel")
+            write_log "Kernel and module information:"
+            write_log "Running kernel: $(uname -r)"
+            write_log "Available kernels:"
+            find /boot -name "vmlinuz-*" -exec basename {} \; | sort >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "Could not list kernels"
+            write_log "Loaded NVIDIA modules:"
+            lsmod | grep nvidia >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No NVIDIA modules loaded"
+            ;;
+        "services")
+            write_log "Service status information:"
+            systemctl status nvidia-vgpud.service >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-vgpud.service not found"
+            systemctl status nvidia-vgpu-mgr.service >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-vgpu-mgr.service not found"
+            ;;
+        "driver")
+            write_log "Driver status information:"
+            nvidia-smi >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-smi not available or failed"
+            nvidia-smi vgpu >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "nvidia-smi vgpu not available or failed"
+            mdevctl types >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "mdevctl not available or no vGPU types found"
+            ;;
+        "iommu")
+            write_log "IOMMU status:"
+            dmesg | grep -i iommu >> "$VGPU_DIR/$LOG_FILE" 2>&1 || write_log "No IOMMU messages found"
+            if [ -d "/sys/class/iommu" ]; then
+                ls -la /sys/class/iommu/ >> "$VGPU_DIR/$LOG_FILE" 2>&1
+            else
+                write_log "IOMMU not available"
+            fi
+            ;;
+    esac
+    
+    write_log "=== END SYSTEM INFO: $section ==="
+}
+
+# Function to run a command with specified description and log level
+run_command() {
+    local description="$1"
+    local log_level="$2"
+    local command="$3"
+    local exit_on_error="${4:-true}"  # Default to exit on error
+    local show_output="${5:-false}"   # Default to hide output unless verbose
+
+    case "$log_level" in
+        "info")
+            echo -e "${GREEN}[+]${NC} ${description}"
+            ;;
+        "notification")
+            echo -e "${YELLOW}[-]${NC} ${description}"
+            ;;
+        "error")
+            echo -e "${RED}[!]${NC} ${description}"
+            ;;
+        *)
+            echo -e "[?] ${description}"
+            ;;
+    esac
+
+    # Log command being executed
+    write_log "$log_level: $description"
+    write_log "COMMAND: $command"
+
+    # Show verbose output if requested or if debug/verbose mode is enabled
+    if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ] || [ "$show_output" = "true" ]; then
+        echo -e "${GRAY}[DEBUG] Executing: $command${NC}"
+        eval "$command" 2>&1 | tee -a "$VGPU_DIR/$LOG_FILE"
+        local exit_code=${PIPESTATUS[0]}
+    else
+        eval "$command" >> "$VGPU_DIR/$LOG_FILE" 2>&1
+        local exit_code=$?
+    fi
+
+    # Log command result
+    write_log "EXIT_CODE: $exit_code"
+    
+    if [ $exit_code -ne 0 ]; then
+        echo -e "${RED}[!]${NC} Command failed with exit code: $exit_code"
+        write_log "ERROR: Command '$command' failed with exit code $exit_code"
+        
+        if [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Last 10 lines from log file:${NC}"
+            tail -10 "$VGPU_DIR/$LOG_FILE" | sed 's/^/  /'
+        fi
+        
+        if [ "$exit_on_error" = "true" ]; then
+            echo -e "${RED}[!]${NC} Installation failed. Check $VGPU_DIR/$LOG_FILE for details."
+            echo -e "${YELLOW}[-]${NC} Run with --verbose flag for more detailed output."
+            exit $exit_code
+        fi
+    else
+        write_log "SUCCESS: Command completed successfully"
+    fi
+    
+    return $exit_code
+}
+
+# Check Proxmox version
+pve_info=$(pveversion)
+version=$(echo "$pve_info" | sed -n 's/^pve-manager\/\([0-9.]*\).*$/\1/p')
+#version=7.4-15
+#version=8.1.4
+kernel=$(echo "$pve_info" | sed -n 's/^.*kernel: \([0-9.-]*pve\).*$/\1/p')
+major_version=$(echo "$version" | sed 's/\([0-9]*\).*/\1/')
+
+# Function to map filename to driver version and patch
+map_filename_to_version() {
+    local filename="$1"
+    if [[ "$filename" =~ ^(NVIDIA-Linux-x86_64-535\.54\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.104\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.129\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.183\.04-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.216\.01-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.230\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.10-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.16-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.90\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.127\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.144\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.163\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.124\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.133\.10-vgpu-kvm\.run)$ ]]; then
+        case "$filename" in
+            NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run)
+                driver_version="16.0"
+                driver_patch="535.54.06.patch"
+                md5="b892f75f8522264bc176f5a555acb176"
+                ;;
+            NVIDIA-Linux-x86_64-535.104.06-vgpu-kvm.run)
+                driver_version="16.1"
+                driver_patch="535.104.06.patch"
+                md5="1020ad5b89fa0570c27786128385ca48"
+                ;;
+            NVIDIA-Linux-x86_64-535.129.03-vgpu-kvm.run)
+                driver_version="16.2"
+                driver_patch="535.129.03.patch"
+                md5="0048208a62bacd2a7dd12fa736aa5cbb"
+                ;;
+            NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run)
+                driver_version="16.4"
+                driver_patch="535.161.05.patch"
+                md5="bad6e09aeb58942750479f091bb9c4b6"
+                ;;
+            NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run)
+                driver_version="16.5"
+                driver_patch="535.161.05.patch"
+                md5="bad6e09aeb58942750479f091bb9c4b6"
+                ;;
+            NVIDIA-Linux-x86_64-535.183.04-vgpu-kvm.run)
+                driver_version="16.7"
+                driver_patch="535.183.04.patch"
+                md5="68961f01a2332b613fe518afd4bfbfb2"
+                ;;
+            NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run)
+                driver_version="16.8"
+                driver_patch="535.216.01.patch"
+                md5="18627628e749f893cd2c3635452006a46"
+                ;;
+            NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run)
+                driver_version="16.9"
+                driver_patch="535.230.02.patch"
+                md5="3f6412723880aa5720b44cf0a9a13009"
+                ;;
+            NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run)
+                driver_version="17.0"
+                driver_patch="550.54.10.patch"
+                md5="5f5e312cbd5bb64946e2a1328a98c08d"
+                ;;
+            NVIDIA-Linux-x86_64-550.54.16-vgpu-kvm.run)
+                driver_version="17.1"
+                driver_patch="550.54.16.patch"
+                md5="4d78514599c16302a0111d355dbf11e3"
+                ;;
+            NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm.run)
+                driver_version="17.3"
+                driver_patch="550.90.05.patch"
+                md5="a3cddad85eee74dc15dbadcbe30dcf3a"
+                ;;
+            NVIDIA-Linux-x86_64-550.127.06-vgpu-kvm.run)
+                driver_version="17.4"
+                driver_patch="550.127.06.patch"
+                md5="400b1b2841908ea36fd8f7fdbec18401"
+                ;;
+            NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run)
+                driver_version="17.5"
+                driver_patch="550.144.02.patch"
+                md5="37016ba868a0b4390c38aebbacfba09e"
+                ;;
+            NVIDIA-Linux-x86_64-550.163.02-vgpu-kvm.run)
+                driver_version="17.6"
+                driver_patch="550.163.10.patch"
+                md5="093036d83baf879a4bb667b484597789"
+                ;;
+            NVIDIA-Linux-x86_64-570.124.03-vgpu-kvm.run)
+                driver_version="18.0"
+                driver_patch="570.124.03.patch"
+                md5="1804b889e27b7f868afb5521d871b095"
+                ;;
+            NVIDIA-Linux-x86_64-570.133.10-vgpu-kvm.run)
+                driver_version="18.1"
+                driver_patch="570.133.10.patch"
+                md5="f435eacdbe3c8002ccad14bd62c9bd2d"
+                ;;
+        esac
+        return 0  # Return true
+    else
+        return 1  # Return false
     fi
 }
 
