@@ -29,6 +29,68 @@ if [ -f "$VGPU_DIR/$CONFIG_FILE" ]; then
     source "$VGPU_DIR/$CONFIG_FILE"
 fi
 
+# Function to test file permissions and accessibility for NVIDIA services
+test_nvidia_config_permissions() {
+    local config_file="/usr/share/nvidia/vgpu/vgpuConfig.xml"
+    
+    echo -e "${YELLOW}[-]${NC} Testing NVIDIA configuration file permissions"
+    
+    if [ ! -f "$config_file" ]; then
+        echo -e "${RED}[!]${NC} Configuration file does not exist: $config_file"
+        return 1
+    fi
+    
+    # Test basic file accessibility
+    if [ -r "$config_file" ]; then
+        echo -e "${GREEN}[+]${NC} Configuration file is readable"
+    else
+        echo -e "${RED}[!]${NC} Configuration file is not readable"
+        return 1
+    fi
+    
+    # Check file ownership and permissions
+    local file_perms=$(ls -la "$config_file" 2>/dev/null)
+    echo -e "${YELLOW}[-]${NC} File permissions: $file_perms"
+    
+    # Check if file has correct ownership (should be root:root or similar)
+    local file_owner=$(stat -c "%U:%G" "$config_file" 2>/dev/null || echo "unknown")
+    echo -e "${YELLOW}[-]${NC} File ownership: $file_owner"
+    
+    # Test if file can be read by checking its content
+    local file_size=$(stat -c%s "$config_file" 2>/dev/null || echo "0")
+    if [ "$file_size" -gt 0 ]; then
+        echo -e "${GREEN}[+]${NC} Configuration file has content (${file_size} bytes)"
+        
+        # Test if file contains Tesla P4 device ID
+        if grep -q "1BB3\|1bb3" "$config_file" 2>/dev/null; then
+            echo -e "${GREEN}[+]${NC} Configuration contains Tesla P4 device ID (1BB3)"
+        else
+            echo -e "${YELLOW}[-]${NC} Configuration may not contain Tesla P4 device ID"
+        fi
+        
+        # Check for P40 entries (should not be present)
+        if grep -q "P40-\|1B38\|1b38" "$config_file" 2>/dev/null; then
+            echo -e "${YELLOW}[-]${NC} Warning: Configuration contains P40 references"
+        else
+            echo -e "${GREEN}[+]${NC} No P40 references found in configuration"
+        fi
+    else
+        echo -e "${RED}[!]${NC} Configuration file is empty"
+        return 1
+    fi
+    
+    # Check SELinux context if available
+    if command -v ls >/dev/null 2>&1 && ls --help 2>&1 | grep -q "\-Z"; then
+        local selinux_context=$(ls -Z "$config_file" 2>/dev/null | awk '{print $1}')
+        if [ -n "$selinux_context" ]; then
+            echo -e "${YELLOW}[-]${NC} SELinux context: $selinux_context"
+        fi
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Configuration file permissions test completed"
+    return 0
+}
+
 # Function to detect Tesla P4 GPUs
 detect_tesla_p4() {
     # Check if system has Tesla P4 GPU (device ID 1bb3)
@@ -441,10 +503,25 @@ apply_tesla_p4_fix() {
         local download_result=$?
         
         if [ $download_result -eq 0 ] && [ -f "$config_path" ]; then
-            # Create nvidia vgpu directory if it doesn't exist
+            # Create nvidia vgpu directory if it doesn't exist with proper permissions checking
+            echo -e "${YELLOW}[-]${NC} Ensuring /usr/share/nvidia/vgpu directory exists with proper permissions"
             if ! mkdir -p "/usr/share/nvidia/vgpu"; then
                 echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory"
+                echo -e "${YELLOW}[-]${NC} This could be due to:"
+                echo -e "${YELLOW}[-]${NC} 1. Insufficient permissions (run as root)"
+                echo -e "${YELLOW}[-]${NC} 2. Read-only filesystem"
+                echo -e "${YELLOW}[-]${NC} 3. SELinux/AppArmor restrictions"
+                echo -e "${YELLOW}[-]${NC} Current user: $(whoami), UID: $(id -u)"
+                ls -la /usr/share/nvidia/ 2>/dev/null | sed 's/^/  /' || echo -e "${YELLOW}[-]${NC}   /usr/share/nvidia/ does not exist"
                 return 1
+            fi
+            
+            # Verify directory permissions and ownership
+            if [ -d "/usr/share/nvidia/vgpu" ]; then
+                echo -e "${GREEN}[+]${NC} Directory created successfully"
+                if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                    echo -e "${GRAY}[DEBUG] Directory permissions: $(ls -ld /usr/share/nvidia/vgpu)${NC}"
+                fi
             fi
             
             # Backup existing config if it exists
@@ -453,12 +530,68 @@ apply_tesla_p4_fix() {
                 echo -e "${YELLOW}[-]${NC} Backing up existing vgpuConfig.xml to $backup_file"
                 if ! cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file"; then
                     echo -e "${YELLOW}[-]${NC} Warning: Failed to backup existing configuration file"
+                    echo -e "${YELLOW}[-]${NC} Check file permissions: $(ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml 2>/dev/null || echo 'file not accessible')"
                 fi
             fi
             
-            # Copy Tesla P4 specific configuration
+            # Copy Tesla P4 specific configuration with enhanced error checking
             echo -e "${GREEN}[+]${NC} Installing Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
+            echo -e "${YELLOW}[-]${NC} Source file: $config_path"
+            echo -e "${YELLOW}[-]${NC} Target file: /usr/share/nvidia/vgpu/vgpuConfig.xml"
+            
+            # Verify source file before copying
+            if [ ! -r "$config_path" ]; then
+                echo -e "${RED}[!]${NC} Source configuration file is not readable: $config_path"
+                echo -e "${YELLOW}[-]${NC} Source file permissions: $(ls -la "$config_path" 2>/dev/null || echo 'file not accessible')"
+                return 1
+            fi
+            
+            if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                echo -e "${GRAY}[DEBUG] Source file size: $(du -h "$config_path" | cut -f1)${NC}"
+                echo -e "${GRAY}[DEBUG] Source file permissions: $(ls -la "$config_path")${NC}"
+                echo -e "${GRAY}[DEBUG] Target directory permissions: $(ls -ld /usr/share/nvidia/vgpu)${NC}"
+            fi
+            
             if cp "$config_path" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                echo -e "${GREEN}[+]${NC} File copied successfully"
+                
+                # Set explicit permissions and ownership for the copied file
+                echo -e "${YELLOW}[-]${NC} Setting proper permissions and ownership on configuration file"
+                
+                # Set file permissions (readable by owner, group, and others)
+                if chmod 644 "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                    echo -e "${GREEN}[+]${NC} File permissions set to 644 (rw-r--r--)"
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to set file permissions"
+                fi
+                
+                # Set ownership to root:root (standard for system configuration files)
+                if chown root:root "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} File ownership set to root:root"
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to set file ownership (may not be running as root)"
+                fi
+                
+                # Verify the copied file is accessible and has correct content
+                echo -e "${YELLOW}[-]${NC} Verifying copied configuration file"
+                if [ -r "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                    local file_size=$(stat -c%s "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || echo "0")
+                    if [ "$file_size" -gt 0 ]; then
+                        echo -e "${GREEN}[+]${NC} Configuration file is readable and non-empty (${file_size} bytes)"
+                    else
+                        echo -e "${RED}[!]${NC} Configuration file is empty or corrupted"
+                        return 1
+                    fi
+                else
+                    echo -e "${RED}[!]${NC} Configuration file is not readable after copy"
+                    echo -e "${YELLOW}[-]${NC} This could indicate permissions or SELinux/AppArmor issues"
+                    return 1
+                fi
+                
+                if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                    echo -e "${GRAY}[DEBUG] Final file permissions: $(ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml)${NC}"
+                    echo -e "${GRAY}[DEBUG] File can be read by NVIDIA services: $(test -r /usr/share/nvidia/vgpu/vgpuConfig.xml && echo 'Yes' || echo 'No')${NC}"
+                fi
                 # Verify the copied configuration contains Tesla P4 data
                 if grep -q "1BB3\|1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
                     echo -e "${GREEN}[+]${NC} Tesla P4 vGPU configuration applied successfully"
@@ -466,6 +599,12 @@ apply_tesla_p4_fix() {
                 else
                     echo -e "${YELLOW}[-]${NC} Warning: Configuration file may not contain Tesla P4 specific data"
                     echo -e "${YELLOW}[-]${NC} This might explain why P40 profiles are still showing"
+                fi
+                
+                # Test file permissions and accessibility for NVIDIA services
+                if ! test_nvidia_config_permissions; then
+                    echo -e "${YELLOW}[-]${NC} Configuration file permissions may prevent NVIDIA services from reading it"
+                    echo -e "${YELLOW}[-]${NC} This could explain why P40 profiles persist despite correct configuration"
                 fi
                 
                 # Enhanced service restart sequence to ensure complete configuration reload
@@ -602,6 +741,17 @@ apply_tesla_p4_fix() {
             else
                 echo -e "${RED}[!]${NC} Failed to copy Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
                 echo -e "${RED}[!]${NC} Tesla P4 fix could not be applied"
+                echo -e "${YELLOW}[-]${NC} Detailed diagnostics for copy failure:"
+                echo -e "${YELLOW}[-]${NC} 1. Source file status: $(ls -la "$config_path" 2>/dev/null || echo 'not accessible')"
+                echo -e "${YELLOW}[-]${NC} 2. Target directory status: $(ls -ld /usr/share/nvidia/vgpu 2>/dev/null || echo 'not accessible')"
+                echo -e "${YELLOW}[-]${NC} 3. Available disk space: $(df -h /usr/share/nvidia/vgpu 2>/dev/null | tail -1 | awk '{print $4}' || echo 'unknown')"
+                echo -e "${YELLOW}[-]${NC} 4. Current user: $(whoami) (UID: $(id -u))"
+                echo -e "${YELLOW}[-]${NC} 5. SELinux status: $(command -v getenforce >/dev/null && getenforce 2>/dev/null || echo 'not available')"
+                echo -e "${YELLOW}[-]${NC} Possible causes:"
+                echo -e "${YELLOW}[-]${NC} - Insufficient permissions (script must be run as root)"
+                echo -e "${YELLOW}[-]${NC} - Target directory read-only or full disk"
+                echo -e "${YELLOW}[-]${NC} - SELinux/AppArmor blocking file operations"
+                echo -e "${YELLOW}[-]${NC} - Source file corrupted or inaccessible"
             fi
         else
             # Try fallback configuration as last resort
@@ -613,9 +763,11 @@ apply_tesla_p4_fix() {
             if [ $fallback_result -eq 0 ] && [ -f "$fallback_config" ]; then
                 echo -e "${YELLOW}[-]${NC} Applying fallback Tesla P4 configuration"
                 
-                # Create nvidia vgpu directory if it doesn't exist
+                # Create nvidia vgpu directory if it doesn't exist with proper permissions checking
+                echo -e "${YELLOW}[-]${NC} Ensuring /usr/share/nvidia/vgpu directory exists for fallback configuration"
                 if ! mkdir -p "/usr/share/nvidia/vgpu"; then
-                    echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory"
+                    echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory for fallback"
+                    echo -e "${YELLOW}[-]${NC} Current user: $(whoami), UID: $(id -u)"
                     fallback_result=1
                 fi
                 
@@ -625,12 +777,43 @@ apply_tesla_p4_fix() {
                     echo -e "${YELLOW}[-]${NC} Backing up existing vgpuConfig.xml to $backup_file"
                     if ! cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file"; then
                         echo -e "${YELLOW}[-]${NC} Warning: Failed to backup existing configuration file"
+                        echo -e "${YELLOW}[-]${NC} Check file permissions: $(ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml 2>/dev/null || echo 'file not accessible')"
                     fi
                 fi
                 
-                # Apply fallback configuration
+                # Apply fallback configuration with enhanced verification
+                echo -e "${YELLOW}[-]${NC} Applying fallback Tesla P4 configuration"
+                echo -e "${YELLOW}[-]${NC} Source file: $fallback_config"
+                echo -e "${YELLOW}[-]${NC} Target file: /usr/share/nvidia/vgpu/vgpuConfig.xml"
+                
                 if cp "$fallback_config" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
-                    echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vGPU configuration applied successfully"
+                    echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vGPU configuration copied successfully"
+                    
+                    # Set explicit permissions and ownership for the fallback configuration
+                    echo -e "${YELLOW}[-]${NC} Setting proper permissions on fallback configuration file"
+                    
+                    # Set file permissions (readable by owner, group, and others)
+                    if chmod 644 "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                        echo -e "${GREEN}[+]${NC} Fallback file permissions set to 644 (rw-r--r--)"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to set fallback file permissions"
+                    fi
+                    
+                    # Set ownership to root:root
+                    if chown root:root "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${GREEN}[+]${NC} Fallback file ownership set to root:root"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to set fallback file ownership"
+                    fi
+                    
+                    # Verify the fallback file is accessible
+                    if [ -r "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                        local file_size=$(stat -c%s "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || echo "0")
+                        echo -e "${GREEN}[+]${NC} Fallback configuration file is readable (${file_size} bytes)"
+                    else
+                        echo -e "${RED}[!]${NC} Fallback configuration file is not readable after copy"
+                        fallback_result=1
+                    fi
                     
                     # Verify configuration contains correct device ID
                     if grep -q "0x1BB3\|0x1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
@@ -645,6 +828,12 @@ apply_tesla_p4_fix() {
                         echo -e "${YELLOW}[-]${NC} This may indicate the fallback config was not applied correctly"
                     else
                         echo -e "${GREEN}[+]${NC} Confirmed: No P40 references found in configuration"
+                    fi
+                    
+                    # Test fallback configuration file permissions
+                    if ! test_nvidia_config_permissions; then
+                        echo -e "${YELLOW}[-]${NC} Fallback configuration file permissions may prevent NVIDIA services from reading it"
+                        echo -e "${YELLOW}[-]${NC} This could explain persistent issues with P40 profile visibility"
                     fi
                     
                     # Enhanced service restart sequence for fallback configuration
@@ -783,6 +972,11 @@ apply_tesla_p4_fix() {
                     fi
                 else
                     echo -e "${RED}[!]${NC} Failed to apply fallback Tesla P4 vgpuConfig.xml"
+                    echo -e "${YELLOW}[-]${NC} Fallback copy operation failed - detailed diagnostics:"
+                    echo -e "${YELLOW}[-]${NC} 1. Fallback source file: $(ls -la "$fallback_config" 2>/dev/null || echo 'not accessible')"
+                    echo -e "${YELLOW}[-]${NC} 2. Target directory: $(ls -ld /usr/share/nvidia/vgpu 2>/dev/null || echo 'not accessible')"
+                    echo -e "${YELLOW}[-]${NC} 3. File system space: $(df -h /usr/share/nvidia/vgpu 2>/dev/null | tail -1 | awk '{print "Used: "$3", Available: "$4}' || echo 'unknown')"
+                    echo -e "${YELLOW}[-]${NC} This suggests a fundamental permissions or system issue"
                     fallback_result=1
                 fi
             fi
