@@ -11,7 +11,7 @@ URL="${URL:-}"
 FILE="${FILE:-}"
 DRIVER_VERSION="${DRIVER_VERSION:-}"
 SCRIPT_VERSION=1.2
-VGPU_DIR=$(pwd)
+VGPU_DIR="$(realpath "$(pwd)")"
 VGPU_SUPPORT="${VGPU_SUPPORT:-}"
 DRIVER_VERSION="${DRIVER_VERSION:-}"
 
@@ -243,6 +243,11 @@ download_tesla_p4_config() {
     
     echo -e "${GREEN}[+]${NC} Tesla P4 detected - downloading driver 16.4 for vgpuConfig.xml"
     
+    if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+        echo -e "${GRAY}[DEBUG] Original directory: $VGPU_DIR${NC}"
+        echo -e "${GRAY}[DEBUG] Current directory: $(pwd)${NC}"
+    fi
+    
     # Create temporary directory for Tesla P4 fix
     local temp_dir="/tmp/tesla_p4_fix"
     mkdir -p "$temp_dir"
@@ -259,7 +264,9 @@ download_tesla_p4_config() {
         if ! check_network_connectivity; then
             echo -e "${RED}[!]${NC} Network connectivity check failed"
             echo -e "${YELLOW}[-]${NC} Please check your internet connection and try again"
-            cd "$VGPU_DIR" || true
+            cd "$VGPU_DIR" || {
+                echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR"
+            }
             return 1
         fi
         
@@ -283,8 +290,8 @@ download_tesla_p4_config() {
                         retry_count=$((retry_count + 1))
                         echo -e "${YELLOW}[-]${NC} Download attempt $retry_count of $max_retries..."
                         
-                        if timeout 300 megadl "$current_url" 2>/dev/null; then
-                            if [ -f "$p4_driver_filename" ]; then
+                        if timeout 300 megadl "$current_url" 2>&1 | grep -v "ERROR\|failed" >/dev/null; then
+                            if [ -f "$p4_driver_filename" ] && [ -s "$p4_driver_filename" ]; then
                                 download_success=true
                                 echo -e "${GREEN}[+]${NC} Successfully downloaded using megadl"
                                 break
@@ -353,6 +360,10 @@ download_tesla_p4_config() {
         # Final check if download succeeded
         if [ "$download_success" = false ] || [ ! -f "$p4_driver_filename" ]; then
             echo -e "${RED}[!]${NC} Failed to download Tesla P4 driver after multiple attempts from all sources"
+            echo -e "${YELLOW}[-]${NC} Download failure details:"
+            echo -e "${YELLOW}[-]${NC} - Mega.nz URL may be throttled or blocked"
+            echo -e "${YELLOW}[-]${NC} - Google Storage URLs returned 403 Forbidden (not publicly accessible)"  
+            echo -e "${YELLOW}[-]${NC} - Network connectivity verified but specific URLs are unavailable"
             echo -e "${YELLOW}[-]${NC} Troubleshooting steps:"
             echo -e "${YELLOW}[-]${NC} 1. Check internet connectivity: ping -c 3 google.com"
             echo -e "${YELLOW}[-]${NC} 2. Install megatools if missing: apt install megatools"
@@ -360,7 +371,9 @@ download_tesla_p4_config() {
             echo -e "${YELLOW}[-]${NC}    - Official NVIDIA: Check NVIDIA Enterprise download portal"
             echo -e "${YELLOW}[-]${NC}    - Community sources: Check vGPU Unlocking Discord for current links"
             echo -e "${YELLOW}[-]${NC} 4. Place downloaded file as: $VGPU_DIR/$p4_driver_filename"
-            cd "$VGPU_DIR" || true
+            cd "$VGPU_DIR" || {
+                echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR"
+            }
             return 1
         fi
         
@@ -387,7 +400,9 @@ download_tesla_p4_config() {
         echo -e "${YELLOW}[-]${NC} 1. Corrupted download (try re-downloading)"
         echo -e "${YELLOW}[-]${NC} 2. Insufficient disk space in /tmp"
         echo -e "${YELLOW}[-]${NC} 3. Permission issues"
-        cd "$VGPU_DIR" || true
+        cd "$VGPU_DIR" || {
+            echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR"
+        }
         return 1
     fi
     
@@ -395,7 +410,9 @@ download_tesla_p4_config() {
     local extracted_dir="${p4_driver_filename%.run}"
     if [ -f "$extracted_dir/vgpuConfig.xml" ]; then
         echo -e "${GREEN}[+]${NC} Tesla P4 vgpuConfig.xml extracted successfully" >&2
-        cd "$VGPU_DIR" || true
+        cd "$VGPU_DIR" || {
+            echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR" >&2
+        }
         echo "$temp_dir/$extracted_dir/vgpuConfig.xml"
         return 0
     else
@@ -403,7 +420,9 @@ download_tesla_p4_config() {
         echo -e "${YELLOW}[-]${NC} Expected location: $temp_dir/$extracted_dir/vgpuConfig.xml" >&2
         echo -e "${YELLOW}[-]${NC} Available files in extracted directory:" >&2
         ls -la "$extracted_dir/" 2>/dev/null | head -10 >&2
-        cd "$VGPU_DIR" || true
+        cd "$VGPU_DIR" || {
+            echo -e "${YELLOW}[-]${NC} Warning: Could not return to original directory: $VGPU_DIR" >&2
+        }
         return 1
     fi
 }
@@ -547,10 +566,30 @@ apply_tesla_p4_fix() {
                 if cp "$fallback_config" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
                     echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vGPU configuration applied successfully"
                     
+                    # Verify configuration contains correct device ID
+                    if grep -q "0x1BB3\|0x1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${GREEN}[+]${NC} Confirmed: Configuration contains Tesla P4 device ID (0x1BB3)"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Could not verify Tesla P4 device ID in configuration"
+                    fi
+                    
+                    # Additional verification - check if P40 entries are present (should not be)
+                    if grep -q "P40-\|0x1B38\|0x1b38" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${YELLOW}[-]${NC} Warning: Configuration still contains P40 references"
+                        echo -e "${YELLOW}[-]${NC} This may indicate the fallback config was not applied correctly"
+                    else
+                        echo -e "${GREEN}[+]${NC} Confirmed: No P40 references found in configuration"
+                    fi
+                    
                     # Restart nvidia-vgpu-mgr.service to load new configuration
                     echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
                     if systemctl restart nvidia-vgpu-mgr.service; then
                         echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                        sleep 10
+                        
+                        # Also restart nvidia-vgpud service to ensure complete reload
+                        echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpud.service to ensure complete configuration reload"
+                        systemctl restart nvidia-vgpud.service 2>/dev/null || echo -e "${YELLOW}[-]${NC} nvidia-vgpud.service restart skipped (may not be running)"
                         sleep 5
                         
                         # Verify the fix worked with fallback
@@ -2077,15 +2116,27 @@ case $STEP in
                   
             # Download and install the selected vGPU driver version
             echo -e "${GREEN}[+]${NC} Downloading vGPU $driver_filename host driver using megadl"
+            
+            # Check if megadl is available
+            if ! command -v megadl >/dev/null 2>&1; then
+                echo -e "${RED}[!]${NC} megadl (megatools) not found. Installing megatools..."
+                apt update && apt install -y megatools
+                if ! command -v megadl >/dev/null 2>&1; then
+                    echo -e "${RED}[!]${NC} Failed to install megatools. Please install manually: apt install megatools"
+                    exit 1
+                fi
+            fi
+            
             megadl "$driver_url"
 
             # Download and install the selected vGPU custom driver
             if [ "$driver_custom" = "none" ]; then
                 echo "${YELLOW}[-]${NC}No available custom found for $driver_filename"
                 echo "${YELLOW}[-]${NC}Continue Installing Driver"
+            else
+                echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
+                megadl "$driver_custom"
             fi
-            echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
-            megadl "$driver_custom"
             
             # Check if download is successful
             if [ $? -ne 0 ]; then
@@ -2465,14 +2516,26 @@ case $STEP in
                 
             # Download and install the selected vGPU driver version
             echo -e "${GREEN}[+]${NC} Downloading vGPU $driver_filename host driver using megadl"
+            
+            # Check if megadl is available
+            if ! command -v megadl >/dev/null 2>&1; then
+                echo -e "${RED}[!]${NC} megadl (megatools) not found. Installing megatools..."
+                apt update && apt install -y megatools
+                if ! command -v megadl >/dev/null 2>&1; then
+                    echo -e "${RED}[!]${NC} Failed to install megatools. Please install manually: apt install megatools"
+                    exit 1
+                fi
+            fi
+            
             megadl "$driver_url"
             
             if [ "$driver_custom" = "none" ]; then
                 echo "${YELLOW}[-]${NC}No available custom found for $driver_filename"
                 echo "${YELLOW}[-]${NC}Continue Installing Driver"
+            else
+                echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
+                megadl "$driver_custom"
             fi
-            echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
-            megadl "$driver_custom"
             # Check if download is successful
             if [ $? -ne 0 ]; then
                 echo -e "${RED}[!]${NC} Download failed."
