@@ -2116,15 +2116,27 @@ case $STEP in
                   
             # Download and install the selected vGPU driver version
             echo -e "${GREEN}[+]${NC} Downloading vGPU $driver_filename host driver using megadl"
+            
+            # Check if megadl is available
+            if ! command -v megadl >/dev/null 2>&1; then
+                echo -e "${RED}[!]${NC} megadl (megatools) not found. Installing megatools..."
+                apt update && apt install -y megatools
+                if ! command -v megadl >/dev/null 2>&1; then
+                    echo -e "${RED}[!]${NC} Failed to install megatools. Please install manually: apt install megatools"
+                    exit 1
+                fi
+            fi
+            
             megadl "$driver_url"
 
             # Download and install the selected vGPU custom driver
             if [ "$driver_custom" = "none" ]; then
                 echo "${YELLOW}[-]${NC}No available custom found for $driver_filename"
                 echo "${YELLOW}[-]${NC}Continue Installing Driver"
+            else
+                echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
+                megadl "$driver_custom"
             fi
-            echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
-            megadl "$driver_custom"
             
             # Check if download is successful
             if [ $? -ne 0 ]; then
@@ -2504,14 +2516,26 @@ case $STEP in
                 
             # Download and install the selected vGPU driver version
             echo -e "${GREEN}[+]${NC} Downloading vGPU $driver_filename host driver using megadl"
+            
+            # Check if megadl is available
+            if ! command -v megadl >/dev/null 2>&1; then
+                echo -e "${RED}[!]${NC} megadl (megatools) not found. Installing megatools..."
+                apt update && apt install -y megatools
+                if ! command -v megadl >/dev/null 2>&1; then
+                    echo -e "${RED}[!]${NC} Failed to install megatools. Please install manually: apt install megatools"
+                    exit 1
+                fi
+            fi
+            
             megadl "$driver_url"
             
             if [ "$driver_custom" = "none" ]; then
                 echo "${YELLOW}[-]${NC}No available custom found for $driver_filename"
                 echo "${YELLOW}[-]${NC}Continue Installing Driver"
+            else
+                echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
+                megadl "$driver_custom"
             fi
-            echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
-            megadl "$driver_custom"
             # Check if download is successful
             if [ $? -ne 0 ]; then
                 echo -e "${RED}[!]${NC} Download failed."
