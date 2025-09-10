@@ -1610,7 +1610,7 @@ case $STEP in
                 # Removing previous vgpu_unlock-rs
                 run_command "Removing previous vgpu_unlock-rs" "notification" "rm -rf /opt/vgpu_unlock-rs/ 2>/dev/null"
                 # Removing vgpu-proxmox
-                run_command "Removing vgpu-proxmox" "notification" "rm -rf $VGPU_DIR/vgpu-promox 2>/dev/null"
+                run_command "Removing vgpu-proxmox" "notification" "rm -rf $VGPU_DIR/vgpu-proxmox 2>/dev/null"
             fi
 
             # Check if the specified lines are present in /etc/modules
@@ -1691,7 +1691,7 @@ case $STEP in
             # Removing vgpu-proxmox
             if confirm_action "Do you want to remove vgpu-proxmox?"; then
                 #echo "removing vgpu-proxmox"
-                run_command "Removing vgpu-proxmox" "notification" "rm -rf $VGPU_DIR/vgpu-promox"
+                run_command "Removing vgpu-proxmox" "notification" "rm -rf $VGPU_DIR/vgpu-proxmox"
             fi
 
             # Removing FastAPI-DLS
