@@ -1602,7 +1602,16 @@ case $STEP in
             elif [ "$choice" -eq 2 ]; then
                 #echo "removing nvidia driver"
                 # Removing previous Nvidia driver
-                run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s"
+                if command -v nvidia-uninstall >/dev/null 2>&1; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, removing for upgrade..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                elif [ -x "/usr/bin/nvidia-uninstall" ] || [ -x "/usr/local/bin/nvidia-uninstall" ]; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, removing for upgrade..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                else
+                    echo -e "${YELLOW}[-]${NC} No NVIDIA driver installation found, skipping driver removal for upgrade..."
+                    write_log "UPGRADE SKIPPED: No NVIDIA driver found to remove"
+                fi
                 # Removing previous vgpu_unlock-rs
                 run_command "Removing previous vgpu_unlock-rs" "notification" "rm -rf /opt/vgpu_unlock-rs/ 2>/dev/null"
                 # Removing vgpu-proxmox
@@ -1674,8 +1683,17 @@ case $STEP in
 
             # Removing previous Nvidia driver
             if confirm_action "Do you want to remove the previous Nvidia driver?"; then
-                #echo "removing previous nvidia driver"
-                run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s"
+                # Check if NVIDIA driver is actually installed
+                if command -v nvidia-uninstall >/dev/null 2>&1; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, proceeding with removal..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                elif [ -x "/usr/bin/nvidia-uninstall" ] || [ -x "/usr/local/bin/nvidia-uninstall" ]; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, proceeding with removal..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                else
+                    echo -e "${YELLOW}[-]${NC} No NVIDIA driver installation found, skipping driver removal..."
+                    write_log "SKIPPED: No NVIDIA driver found to remove"
+                fi
             fi
 
             # Removing previous vgpu_unlock-rs
