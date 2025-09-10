@@ -1592,10 +1592,6 @@ case $STEP in
                     # Systemctl
                     #echo "systemctl daemon-reload"
                     run_command "Systemctl daemon-reload" "info" "systemctl daemon-reload"
-                    #echo "enable nvidia-vgpud.service"
-                    run_command "Enable nvidia-vgpud.service" "info" "systemctl enable nvidia-vgpud.service" false
-                    #echo "enable nvidia-vgpu-mgr.service"
-                    run_command "Enable nvidia-vgpu-mgr.service" "info" "systemctl enable nvidia-vgpu-mgr.service" false
                     update_grub
 
                 elif [ "$VGPU_SUPPORT" = "Native" ]; then
@@ -1606,7 +1602,16 @@ case $STEP in
             elif [ "$choice" -eq 2 ]; then
                 #echo "removing nvidia driver"
                 # Removing previous Nvidia driver
-                run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s"
+                if command -v nvidia-uninstall >/dev/null 2>&1; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, removing for upgrade..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                elif [ -x "/usr/bin/nvidia-uninstall" ] || [ -x "/usr/local/bin/nvidia-uninstall" ]; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, removing for upgrade..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                else
+                    echo -e "${YELLOW}[-]${NC} No NVIDIA driver installation found, skipping driver removal for upgrade..."
+                    write_log "UPGRADE SKIPPED: No NVIDIA driver found to remove"
+                fi
                 # Removing previous vgpu_unlock-rs
                 run_command "Removing previous vgpu_unlock-rs" "notification" "rm -rf /opt/vgpu_unlock-rs/ 2>/dev/null"
                 # Removing vgpu-proxmox
@@ -1678,8 +1683,17 @@ case $STEP in
 
             # Removing previous Nvidia driver
             if confirm_action "Do you want to remove the previous Nvidia driver?"; then
-                #echo "removing previous nvidia driver"
-                run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s"
+                # Check if NVIDIA driver is actually installed
+                if command -v nvidia-uninstall >/dev/null 2>&1; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, proceeding with removal..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                elif [ -x "/usr/bin/nvidia-uninstall" ] || [ -x "/usr/local/bin/nvidia-uninstall" ]; then
+                    echo -e "${YELLOW}[-]${NC} NVIDIA driver found, proceeding with removal..."
+                    run_command "Removing previous Nvidia driver" "notification" "nvidia-uninstall -s" false
+                else
+                    echo -e "${YELLOW}[-]${NC} No NVIDIA driver installation found, skipping driver removal..."
+                    write_log "SKIPPED: No NVIDIA driver found to remove"
+                fi
             fi
 
             # Removing previous vgpu_unlock-rs
@@ -2338,48 +2352,59 @@ case $STEP in
         if [ "$VGPU_SUPPORT" = "Yes" ]; then
             write_log "Installing vGPU driver with patching for non-native vGPU support"
             
-            # Add custom to original filename
-            custom_filename="${driver_filename%.run}-custom.run"
-
-            # Check if $custom_filename exists
-            if [ -e "$custom_filename" ]; then
-                mv "$custom_filename" "$custom_filename.bak"
-                echo -e "${YELLOW}[-]${NC} Moved $custom_filename to $custom_filename.bak"
-                write_log "Moved existing custom driver: $custom_filename to backup"
-            fi
-
-            # Patch and install the driver
-            echo -e "${YELLOW}[-]${NC} Applying vGPU patch to driver..."
-            if [ "$VERBOSE" = "true" ]; then
-                echo -e "${GRAY}[DEBUG] Patch file: $VGPU_DIR/vgpu-proxmox/$driver_patch${NC}"
-                echo -e "${GRAY}[DEBUG] Checking patch file existence...${NC}"
-                if [ -f "$VGPU_DIR/vgpu-proxmox/$driver_patch" ]; then
-                    echo -e "${GRAY}[DEBUG] Patch file found${NC}"
-                else
-                    echo -e "${RED}[!]${NC} Patch file not found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
-                    write_log "ERROR: Patch file not found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
-                fi
-            fi
-            
-            run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch" true true
-            
-            if [ -f "$custom_filename" ]; then
-                echo -e "${GREEN}[+]${NC} Patched driver created successfully: $custom_filename"
-                write_log "Patched driver created: $custom_filename"
+            # Check if patch file exists first
+            if [ -f "$VGPU_DIR/vgpu-proxmox/$driver_patch" ]; then
+                echo -e "${YELLOW}[-]${NC} Patch file found, applying vGPU patch to driver..."
+                write_log "Patch file found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
                 
+                # Add custom to original filename
+                custom_filename="${driver_filename%.run}-custom.run"
+
+                # Check if $custom_filename exists
+                if [ -e "$custom_filename" ]; then
+                    mv "$custom_filename" "$custom_filename.bak"
+                    echo -e "${YELLOW}[-]${NC} Moved $custom_filename to $custom_filename.bak"
+                    write_log "Moved existing custom driver: $custom_filename to backup"
+                fi
+
                 if [ "$VERBOSE" = "true" ]; then
-                    echo -e "${GRAY}[DEBUG] Patched driver size: $(du -h $custom_filename | cut -f1)${NC}"
+                    echo -e "${GRAY}[DEBUG] Patch file: $VGPU_DIR/vgpu-proxmox/$driver_patch${NC}"
+                    echo -e "${GRAY}[DEBUG] Applying patch to create: $custom_filename${NC}"
+                fi
+                
+                # Apply the patch
+                run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch" true true
+                
+                if [ -f "$custom_filename" ]; then
+                    echo -e "${GREEN}[+]${NC} Patched driver created successfully: $custom_filename"
+                    write_log "Patched driver created: $custom_filename"
+                    
+                    if [ "$VERBOSE" = "true" ]; then
+                        echo -e "${GRAY}[DEBUG] Patched driver size: $(du -h $custom_filename | cut -f1)${NC}"
+                    fi
+                    
+                    # Run the patched driver installer
+                    echo -e "${YELLOW}[-]${NC} Installing patched vGPU driver (this may take several minutes)..."
+                    log_system_info "kernel"  # Log kernel state before installation
+                    run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s" true true
+                else
+                    echo -e "${RED}[!]${NC} Failed to create patched driver"
+                    write_log "ERROR: Patched driver not created"
+                    exit 1
                 fi
             else
-                echo -e "${RED}[!]${NC} Failed to create patched driver"
-                write_log "ERROR: Patched driver not created"
-                exit 1
+                # No patch file available - continue with original driver
+                echo -e "${YELLOW}[-]${NC} No patch file found for this driver version: $driver_patch"
+                echo -e "${YELLOW}[-]${NC} This driver may not require patching or patch is not available"
+                echo -e "${YELLOW}[-]${NC} Continuing with original driver installation..."
+                write_log "WARNING: No patch file found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
+                write_log "Continuing with original driver installation"
+                
+                # Run the regular driver installer for non-native GPU without patch
+                echo -e "${YELLOW}[-]${NC} Installing original vGPU driver (this may take several minutes)..."
+                log_system_info "kernel"  # Log kernel state before installation
+                run_command "Installing original driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
             fi
-            
-            # Run the patched driver installer
-            echo -e "${YELLOW}[-]${NC} Installing patched vGPU driver (this may take several minutes)..."
-            log_system_info "kernel"  # Log kernel state before installation
-            run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s" true true
             
         elif [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Unknown" ]; then
             write_log "Installing native vGPU driver (no patching required)"
