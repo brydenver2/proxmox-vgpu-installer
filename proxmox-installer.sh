@@ -34,12 +34,32 @@ detect_tesla_p4() {
     # Check if system has Tesla P4 GPU (device ID 1bb3)
     local gpu_info=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
     if [ -n "$gpu_info" ]; then
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Found NVIDIA GPU(s):${NC}"
+            echo "$gpu_info" | sed 's/^/  /'
+        fi
+        
         local gpu_device_ids=$(echo "$gpu_info" | grep -oE '\[10de:[0-9a-fA-F]{2,4}\]' | cut -d ':' -f 2 | tr -d ']')
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Extracted device IDs: $gpu_device_ids${NC}"
+        fi
+        
         for device_id in $gpu_device_ids; do
             if [ "$device_id" = "1bb3" ]; then
+                if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                    echo -e "${GRAY}[DEBUG] Tesla P4 detected (device ID: 1bb3)${NC}"
+                fi
                 return 0  # Tesla P4 found
             fi
         done
+        
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] No Tesla P4 found (looking for device ID 1bb3)${NC}"
+        fi
+    else
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] No NVIDIA GPUs found${NC}"
+        fi
     fi
     return 1  # Tesla P4 not found
 }
@@ -72,7 +92,13 @@ show_tesla_p4_troubleshooting() {
     echo -e "   • Check service status: systemctl status nvidia-vgpu-mgr.service"
     echo -e "   • Reboot system if needed"
     echo ""
-    echo -e "${YELLOW}5. Manual fix steps if automatic fix fails:${NC}"
+    echo -e "${YELLOW}5. How to verify Tesla P4 profiles are working:${NC}"
+    echo -e "   • Run: mdevctl types | grep -i 'p4-'"
+    echo -e "   • Should show profiles like 'GRID P4-1Q', 'GRID P4-2Q', etc."
+    echo -e "   • Should NOT show 'GRID P40-' profiles"
+    echo -e "   • If you see P40 profiles, the fix needs to be applied"
+    echo ""
+    echo -e "${YELLOW}6. Manual fix steps if automatic fix fails:${NC}"
     echo -e "   • Download: wget -O NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run [URL]"
     echo -e "   • Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x"
     echo -e "   • Copy: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/"
@@ -94,7 +120,7 @@ show_tesla_p4_troubleshooting() {
 
 # Function to display usage information
 display_usage() {
-    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help]"
+    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help] [--tesla-p4-status]"
     echo -e ""
     echo -e "Options:"
     echo -e "  --debug               Enable debug mode with verbose output"
@@ -104,6 +130,7 @@ display_usage() {
     echo -e "  --file <file>         Use local driver file"
     echo -e "  --tesla-p4-fix        Run Tesla P4 vGPU configuration fix only"
     echo -e "  --tesla-p4-help       Show Tesla P4 troubleshooting guide"
+    echo -e "  --tesla-p4-status     Check Tesla P4 vGPU profile status"
     echo -e ""
     exit 1
 }
@@ -146,6 +173,78 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
                 echo -e "${YELLOW}[-]${NC} This fix is only applicable to systems with Tesla P4 GPUs (device ID 1bb3)"
             fi
+            exit 0
+            ;;
+        --tesla-p4-status)
+            # Check Tesla P4 status
+            echo ""
+            echo -e "${BLUE}Tesla P4 vGPU Status Check${NC}"
+            echo -e "${BLUE}==========================${NC}"
+            echo ""
+            
+            # Check if Tesla P4 is detected
+            if detect_tesla_p4; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected (device ID: 1bb3)"
+                
+                # Check if NVIDIA services are running
+                if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
+                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service is active"
+                else
+                    echo -e "${YELLOW}[-]${NC} nvidia-vgpu-mgr.service is not active"
+                fi
+                
+                # Check vgpuConfig.xml
+                if [ -f "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                    echo -e "${GREEN}[+]${NC} vgpuConfig.xml found at /usr/share/nvidia/vgpu/"
+                    if grep -q "1BB3\|1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${GREEN}[+]${NC} Configuration contains Tesla P4 device ID (1BB3)"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Configuration may not contain Tesla P4 device ID"
+                    fi
+                else
+                    echo -e "${YELLOW}[-]${NC} vgpuConfig.xml not found - NVIDIA driver may not be installed"
+                fi
+                
+                # Check mdevctl output
+                echo ""
+                echo -e "${YELLOW}[-]${NC} Checking vGPU types..."
+                if command -v mdevctl >/dev/null 2>&1; then
+                    local mdev_output=$(mdevctl types 2>/dev/null || true)
+                    if [ -n "$mdev_output" ]; then
+                        local p4_found=false
+                        local p40_found=false
+                        
+                        if echo "$mdev_output" | grep -q "GRID P4-"; then
+                            p4_found=true
+                            echo -e "${GREEN}[+]${NC} Tesla P4 profiles found:"
+                            echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                        fi
+                        
+                        if echo "$mdev_output" | grep -q "GRID P40-"; then
+                            p40_found=true
+                            echo -e "${YELLOW}[-]${NC} P40 profiles detected (this may be the issue):"
+                            echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                        fi
+                        
+                        if [ "$p4_found" = true ] && [ "$p40_found" = false ]; then
+                            echo -e "${GREEN}[+]${NC} Status: Tesla P4 is working correctly - P4 profiles visible"
+                        elif [ "$p40_found" = true ]; then
+                            echo -e "${RED}[!]${NC} Status: Tesla P4 fix needed - P40 profiles are showing"
+                            echo -e "${YELLOW}[-]${NC} Run: $0 --tesla-p4-fix to apply the fix"
+                        else
+                            echo -e "${YELLOW}[-]${NC} Status: No P4/P40 profiles found"
+                        fi
+                    else
+                        echo -e "${YELLOW}[-]${NC} No vGPU types found - services may not be running"
+                    fi
+                else
+                    echo -e "${YELLOW}[-]${NC} mdevctl command not found"
+                fi
+            else
+                echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
+                echo -e "${YELLOW}[-]${NC} This check is only for systems with Tesla P4 GPUs (device ID 1bb3)"
+            fi
+            echo ""
             exit 0
             ;;
         --tesla-p4-help)
@@ -657,31 +756,64 @@ apply_tesla_p4_fix() {
             # Copy Tesla P4 specific configuration
             echo -e "${GREEN}[+]${NC} Installing Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
             if cp "$config_path" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
-                echo -e "${GREEN}[+]${NC} Tesla P4 vGPU configuration applied successfully"
+                # Verify the copied configuration contains Tesla P4 data
+                if grep -q "1BB3\|1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} Tesla P4 vGPU configuration applied successfully"
+                    echo -e "${GREEN}[+]${NC} Configuration file contains Tesla P4 device ID (1BB3)"
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Configuration file may not contain Tesla P4 specific data"
+                    echo -e "${YELLOW}[-]${NC} This might explain why P40 profiles are still showing"
+                fi
                 
                 # Restart nvidia-vgpu-mgr.service to load new configuration
                 echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
                 if systemctl restart nvidia-vgpu-mgr.service; then
                     echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
-                    # Give service time to start and initialize
-                    sleep 5
+                    # Give service more time to start and initialize
+                    echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to initialize with new configuration..."
+                    sleep 10
                 else
                     echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service, manual restart may be needed"
                 fi
                 
-                # Verify the fix worked
+                # Verify the fix worked with more specific P4 detection
                 echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available..."
                 if command -v mdevctl >/dev/null 2>&1; then
                     local mdev_output
-                    mdev_output=$(timeout 15 mdevctl types 2>/dev/null | grep -i "grid\|tesla\|p4" || true)
+                    local p4_profiles_found=false
+                    local p40_profiles_found=false
+                    
+                    # Get all mdevctl output
+                    mdev_output=$(timeout 20 mdevctl types 2>/dev/null || true)
+                    
                     if [ -n "$mdev_output" ]; then
-                        echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available:"
-                        echo "$mdev_output" | head -5 | sed 's/^/  /'
-                        local total_types=$(echo "$mdev_output" | wc -l)
-                        if [ "$total_types" -gt 5 ]; then
-                            echo -e "${YELLOW}[-]${NC}   ... and $(( total_types - 5 )) more vGPU types available"
+                        # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
+                        if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
+                            p4_profiles_found=true
+                            echo -e "${GREEN}[+]${NC} Tesla P4 vGPU profiles detected:"
+                            echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
                         fi
-                        echo -e "${GREEN}[+]${NC} Tesla P4 fix applied successfully - P4 profiles should now be visible"
+                        
+                        # Check if P40 profiles are still showing (this indicates the fix didn't work)
+                        if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
+                            p40_profiles_found=true
+                            echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected:"
+                            echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                        fi
+                        
+                        if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
+                            echo -e "${GREEN}[+]${NC} Tesla P4 fix applied successfully - P4 profiles are now visible"
+                            echo -e "${GREEN}[+]${NC} P40 profiles have been correctly replaced with P4 profiles"
+                        elif [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = true ]; then
+                            echo -e "${YELLOW}[-]${NC} Partial success: P4 profiles found, but P40 profiles still present"
+                            echo -e "${YELLOW}[-]${NC} This may indicate multiple GPUs or incomplete configuration replacement"
+                        elif [ "$p40_profiles_found" = true ]; then
+                            echo -e "${RED}[!]${NC} Tesla P4 fix may not have worked - still showing P40 profiles"
+                            echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting"
+                        else
+                            echo -e "${YELLOW}[-]${NC} No specific P4 or P40 profiles detected"
+                            echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few more minutes"
+                        fi
                     else
                         echo -e "${YELLOW}[-]${NC} No vGPU types detected yet"
                         echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few minutes or after a reboot"
