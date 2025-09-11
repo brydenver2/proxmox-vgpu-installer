@@ -408,8 +408,8 @@ download_tesla_p4_config() {
 needs_tesla_p4_upgrade_workflow() {
     local selected_driver="$1"
     
-    # Check if Tesla P4 is present and v17 driver is being installed
-    if detect_tesla_p4 && [[ "$selected_driver" == *"550.54."* ]]; then
+    # Check if Tesla P4 is present and specifically v17.0 driver is being installed
+    if detect_tesla_p4 && [[ "$selected_driver" == "NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run" ]]; then
         return 0  # Yes, needs upgrade workflow
     fi
     return 1  # No upgrade workflow needed
