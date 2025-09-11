@@ -3,6 +3,49 @@
 ## Problem Addressed
 Tesla P4 GPUs were showing P40 vGPU profiles instead of correct P4 profiles when running `mdevctl types`.
 
+## Enhanced Solution (v1.2.1)
+
+### Critical Issue Resolved
+**Problem**: Configuration file was correctly applied (contained Tesla P4 device ID 0x1BB3, no P40 references), but P40 profiles were still appearing in `mdevctl types` output instead of P4 profiles.
+
+**Root Cause**: NVIDIA services were not properly reloading the new configuration file after replacement.
+
+### Enhanced Service Restart Implementation
+
+**Before (Insufficient):**
+```bash
+systemctl restart nvidia-vgpu-mgr.service
+sleep 10
+```
+
+**After (Enhanced):**
+```bash
+# Sequential stop in reverse order
+systemctl stop nvidia-vgpu-mgr.service
+systemctl stop nvidia-vgpud.service
+sleep 5
+
+# Clear kernel module cache if available
+modprobe -r nvidia_vgpu_vfio nvidia
+modprobe nvidia
+
+# Start in correct order with proper delays
+systemctl start nvidia-vgpud.service
+sleep 5
+systemctl start nvidia-vgpu-mgr.service
+sleep 15
+
+# Verify services are actually running
+systemctl is-active nvidia-vgpu-mgr.service
+```
+
+### Enhanced Verification with Retry Logic
+
+- **3 verification attempts** with exponential backoff (10, 20, 30 seconds)
+- **Extended timeout** from 20 to 30 seconds for mdevctl
+- **Specific P4 vs P40 detection** to confirm fix success
+- **Detailed troubleshooting** when P40 profiles persist
+
 ## Solution Implemented
 
 ### Enhanced Detection and Verification

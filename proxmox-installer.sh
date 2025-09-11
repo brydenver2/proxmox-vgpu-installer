@@ -29,6 +29,68 @@ if [ -f "$VGPU_DIR/$CONFIG_FILE" ]; then
     source "$VGPU_DIR/$CONFIG_FILE"
 fi
 
+# Function to test file permissions and accessibility for NVIDIA services
+test_nvidia_config_permissions() {
+    local config_file="/usr/share/nvidia/vgpu/vgpuConfig.xml"
+    
+    echo -e "${YELLOW}[-]${NC} Testing NVIDIA configuration file permissions"
+    
+    if [ ! -f "$config_file" ]; then
+        echo -e "${RED}[!]${NC} Configuration file does not exist: $config_file"
+        return 1
+    fi
+    
+    # Test basic file accessibility
+    if [ -r "$config_file" ]; then
+        echo -e "${GREEN}[+]${NC} Configuration file is readable"
+    else
+        echo -e "${RED}[!]${NC} Configuration file is not readable"
+        return 1
+    fi
+    
+    # Check file ownership and permissions
+    local file_perms=$(ls -la "$config_file" 2>/dev/null)
+    echo -e "${YELLOW}[-]${NC} File permissions: $file_perms"
+    
+    # Check if file has correct ownership (should be root:root or similar)
+    local file_owner=$(stat -c "%U:%G" "$config_file" 2>/dev/null || echo "unknown")
+    echo -e "${YELLOW}[-]${NC} File ownership: $file_owner"
+    
+    # Test if file can be read by checking its content
+    local file_size=$(stat -c%s "$config_file" 2>/dev/null || echo "0")
+    if [ "$file_size" -gt 0 ]; then
+        echo -e "${GREEN}[+]${NC} Configuration file has content (${file_size} bytes)"
+        
+        # Test if file contains Tesla P4 device ID
+        if grep -q "1BB3\|1bb3" "$config_file" 2>/dev/null; then
+            echo -e "${GREEN}[+]${NC} Configuration contains Tesla P4 device ID (1BB3)"
+        else
+            echo -e "${YELLOW}[-]${NC} Configuration may not contain Tesla P4 device ID"
+        fi
+        
+        # Check for P40 entries (should not be present)
+        if grep -q "P40-\|1B38\|1b38" "$config_file" 2>/dev/null; then
+            echo -e "${YELLOW}[-]${NC} Warning: Configuration contains P40 references"
+        else
+            echo -e "${GREEN}[+]${NC} No P40 references found in configuration"
+        fi
+    else
+        echo -e "${RED}[!]${NC} Configuration file is empty"
+        return 1
+    fi
+    
+    # Check SELinux context if available
+    if command -v ls >/dev/null 2>&1 && ls --help 2>&1 | grep -q "\-Z"; then
+        local selinux_context=$(ls -Z "$config_file" 2>/dev/null | awk '{print $1}')
+        if [ -n "$selinux_context" ]; then
+            echo -e "${YELLOW}[-]${NC} SELinux context: $selinux_context"
+        fi
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Configuration file permissions test completed"
+    return 0
+}
+
 # Function to detect Tesla P4 GPUs
 detect_tesla_p4() {
     # Check if system has Tesla P4 GPU (device ID 1bb3)
@@ -441,10 +503,25 @@ apply_tesla_p4_fix() {
         local download_result=$?
         
         if [ $download_result -eq 0 ] && [ -f "$config_path" ]; then
-            # Create nvidia vgpu directory if it doesn't exist
+            # Create nvidia vgpu directory if it doesn't exist with proper permissions checking
+            echo -e "${YELLOW}[-]${NC} Ensuring /usr/share/nvidia/vgpu directory exists with proper permissions"
             if ! mkdir -p "/usr/share/nvidia/vgpu"; then
                 echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory"
+                echo -e "${YELLOW}[-]${NC} This could be due to:"
+                echo -e "${YELLOW}[-]${NC} 1. Insufficient permissions (run as root)"
+                echo -e "${YELLOW}[-]${NC} 2. Read-only filesystem"
+                echo -e "${YELLOW}[-]${NC} 3. SELinux/AppArmor restrictions"
+                echo -e "${YELLOW}[-]${NC} Current user: $(whoami), UID: $(id -u)"
+                ls -la /usr/share/nvidia/ 2>/dev/null | sed 's/^/  /' || echo -e "${YELLOW}[-]${NC}   /usr/share/nvidia/ does not exist"
                 return 1
+            fi
+            
+            # Verify directory permissions and ownership
+            if [ -d "/usr/share/nvidia/vgpu" ]; then
+                echo -e "${GREEN}[+]${NC} Directory created successfully"
+                if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                    echo -e "${GRAY}[DEBUG] Directory permissions: $(ls -ld /usr/share/nvidia/vgpu)${NC}"
+                fi
             fi
             
             # Backup existing config if it exists
@@ -453,12 +530,68 @@ apply_tesla_p4_fix() {
                 echo -e "${YELLOW}[-]${NC} Backing up existing vgpuConfig.xml to $backup_file"
                 if ! cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file"; then
                     echo -e "${YELLOW}[-]${NC} Warning: Failed to backup existing configuration file"
+                    echo -e "${YELLOW}[-]${NC} Check file permissions: $(ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml 2>/dev/null || echo 'file not accessible')"
                 fi
             fi
             
-            # Copy Tesla P4 specific configuration
+            # Copy Tesla P4 specific configuration with enhanced error checking
             echo -e "${GREEN}[+]${NC} Installing Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
+            echo -e "${YELLOW}[-]${NC} Source file: $config_path"
+            echo -e "${YELLOW}[-]${NC} Target file: /usr/share/nvidia/vgpu/vgpuConfig.xml"
+            
+            # Verify source file before copying
+            if [ ! -r "$config_path" ]; then
+                echo -e "${RED}[!]${NC} Source configuration file is not readable: $config_path"
+                echo -e "${YELLOW}[-]${NC} Source file permissions: $(ls -la "$config_path" 2>/dev/null || echo 'file not accessible')"
+                return 1
+            fi
+            
+            if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                echo -e "${GRAY}[DEBUG] Source file size: $(du -h "$config_path" | cut -f1)${NC}"
+                echo -e "${GRAY}[DEBUG] Source file permissions: $(ls -la "$config_path")${NC}"
+                echo -e "${GRAY}[DEBUG] Target directory permissions: $(ls -ld /usr/share/nvidia/vgpu)${NC}"
+            fi
+            
             if cp "$config_path" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                echo -e "${GREEN}[+]${NC} File copied successfully"
+                
+                # Set explicit permissions and ownership for the copied file
+                echo -e "${YELLOW}[-]${NC} Setting proper permissions and ownership on configuration file"
+                
+                # Set file permissions (readable by owner, group, and others)
+                if chmod 644 "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                    echo -e "${GREEN}[+]${NC} File permissions set to 644 (rw-r--r--)"
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to set file permissions"
+                fi
+                
+                # Set ownership to root:root (standard for system configuration files)
+                if chown root:root "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} File ownership set to root:root"
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to set file ownership (may not be running as root)"
+                fi
+                
+                # Verify the copied file is accessible and has correct content
+                echo -e "${YELLOW}[-]${NC} Verifying copied configuration file"
+                if [ -r "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                    local file_size=$(stat -c%s "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || echo "0")
+                    if [ "$file_size" -gt 0 ]; then
+                        echo -e "${GREEN}[+]${NC} Configuration file is readable and non-empty (${file_size} bytes)"
+                    else
+                        echo -e "${RED}[!]${NC} Configuration file is empty or corrupted"
+                        return 1
+                    fi
+                else
+                    echo -e "${RED}[!]${NC} Configuration file is not readable after copy"
+                    echo -e "${YELLOW}[-]${NC} This could indicate permissions or SELinux/AppArmor issues"
+                    return 1
+                fi
+                
+                if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                    echo -e "${GRAY}[DEBUG] Final file permissions: $(ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml)${NC}"
+                    echo -e "${GRAY}[DEBUG] File can be read by NVIDIA services: $(test -r /usr/share/nvidia/vgpu/vgpuConfig.xml && echo 'Yes' || echo 'No')${NC}"
+                fi
                 # Verify the copied configuration contains Tesla P4 data
                 if grep -q "1BB3\|1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
                     echo -e "${GREEN}[+]${NC} Tesla P4 vGPU configuration applied successfully"
@@ -468,58 +601,130 @@ apply_tesla_p4_fix() {
                     echo -e "${YELLOW}[-]${NC} This might explain why P40 profiles are still showing"
                 fi
                 
-                # Restart nvidia-vgpu-mgr.service to load new configuration
-                echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
-                if systemctl restart nvidia-vgpu-mgr.service; then
-                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
-                    # Give service more time to start and initialize
-                    echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to initialize with new configuration..."
-                    sleep 10
-                else
-                    echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service, manual restart may be needed"
+                # Test file permissions and accessibility for NVIDIA services
+                if ! test_nvidia_config_permissions; then
+                    echo -e "${YELLOW}[-]${NC} Configuration file permissions may prevent NVIDIA services from reading it"
+                    echo -e "${YELLOW}[-]${NC} This could explain why P40 profiles persist despite correct configuration"
                 fi
                 
-                # Verify the fix worked with more specific P4 detection
+                # Enhanced service restart sequence to ensure complete configuration reload
+                echo -e "${YELLOW}[-]${NC} Restarting NVIDIA services to load new configuration"
+                
+                # Stop services in reverse order first
+                echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpu-mgr.service..."
+                systemctl stop nvidia-vgpu-mgr.service 2>/dev/null || true
+                
+                echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpud.service..."
+                systemctl stop nvidia-vgpud.service 2>/dev/null || true
+                
+                # Wait for services to fully stop
+                echo -e "${YELLOW}[-]${NC} Waiting for services to fully stop..."
+                sleep 5
+                
+                # Clear any potential driver cache (if nvidia-modprobe is available)
+                if command -v nvidia-modprobe >/dev/null 2>&1; then
+                    echo -e "${YELLOW}[-]${NC} Clearing NVIDIA kernel module cache..."
+                    modprobe -r nvidia_vgpu_vfio nvidia 2>/dev/null || true
+                    sleep 2
+                    modprobe nvidia 2>/dev/null || true
+                fi
+                
+                # Start services in correct order
+                echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpud.service..."
+                if systemctl start nvidia-vgpud.service; then
+                    echo -e "${GREEN}[+]${NC} nvidia-vgpud.service started successfully"
+                else
+                    echo -e "${YELLOW}[-]${NC} Warning: Failed to start nvidia-vgpud.service"
+                fi
+                
+                # Wait before starting the manager service
+                sleep 5
+                
+                echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpu-mgr.service..."
+                if systemctl start nvidia-vgpu-mgr.service; then
+                    echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service started successfully"
+                    
+                    # Give services more time to fully initialize and load configuration
+                    echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to fully initialize with new configuration..."
+                    sleep 15
+                    
+                    # Additional verification that the service is actually running
+                    if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service is running and active"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: nvidia-vgpu-mgr.service may not be fully initialized"
+                    fi
+                else
+                    echo -e "${RED}[!]${NC} Failed to start nvidia-vgpu-mgr.service"
+                    echo -e "${YELLOW}[-]${NC} Trying restart instead of start..."
+                    if systemctl restart nvidia-vgpu-mgr.service; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                        sleep 10
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service, manual intervention may be needed"
+                    fi
+                fi
+                
+                # Verify the fix worked with more specific P4 detection and retry logic
                 echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available..."
                 if command -v mdevctl >/dev/null 2>&1; then
                     local mdev_output
                     local p4_profiles_found=false
                     local p40_profiles_found=false
+                    local retry_count=0
+                    local max_retries=3
                     
-                    # Get all mdevctl output
-                    mdev_output=$(timeout 20 mdevctl types 2>/dev/null || true)
-                    
-                    if [ -n "$mdev_output" ]; then
-                        # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
-                        if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
-                            p4_profiles_found=true
-                            echo -e "${GREEN}[+]${NC} Tesla P4 vGPU profiles detected:"
-                            echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                    # Retry verification with increasing delays
+                    while [ $retry_count -lt $max_retries ] && [ "$p4_profiles_found" = false ]; do
+                        if [ $retry_count -gt 0 ]; then
+                            echo -e "${YELLOW}[-]${NC} Verification attempt $((retry_count + 1)) of $max_retries..."
+                            sleep $((retry_count * 10))  # 10, 20, 30 seconds
                         fi
                         
-                        # Check if P40 profiles are still showing (this indicates the fix didn't work)
-                        if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
-                            p40_profiles_found=true
-                            echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected:"
-                            echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
-                        fi
+                        # Get all mdevctl output with extended timeout
+                        mdev_output=$(timeout 30 mdevctl types 2>/dev/null || true)
                         
-                        if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
-                            echo -e "${GREEN}[+]${NC} Tesla P4 fix applied successfully - P4 profiles are now visible"
-                            echo -e "${GREEN}[+]${NC} P40 profiles have been correctly replaced with P4 profiles"
-                        elif [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = true ]; then
-                            echo -e "${YELLOW}[-]${NC} Partial success: P4 profiles found, but P40 profiles still present"
-                            echo -e "${YELLOW}[-]${NC} This may indicate multiple GPUs or incomplete configuration replacement"
-                        elif [ "$p40_profiles_found" = true ]; then
-                            echo -e "${RED}[!]${NC} Tesla P4 fix may not have worked - still showing P40 profiles"
-                            echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting"
+                        if [ -n "$mdev_output" ]; then
+                            # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
+                            if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
+                                p4_profiles_found=true
+                                echo -e "${GREEN}[+]${NC} Tesla P4 vGPU profiles detected:"
+                                echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                            fi
+                            
+                            # Check if P40 profiles are still showing (this indicates the fix didn't work)
+                            if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
+                                p40_profiles_found=true
+                                echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected:"
+                                echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                            fi
                         else
-                            echo -e "${YELLOW}[-]${NC} No specific P4 or P40 profiles detected"
-                            echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few more minutes"
+                            echo -e "${YELLOW}[-]${NC} No vGPU types detected on attempt $((retry_count + 1))"
                         fi
+                        
+                        retry_count=$((retry_count + 1))
+                    done
+                    
+                    # Final assessment with clear messaging
+                    if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
+                        echo -e "${GREEN}[+]${NC} Tesla P4 fix applied successfully - P4 profiles are now visible"
+                        echo -e "${GREEN}[+]${NC} P40 profiles have been correctly replaced with P4 profiles"
+                    elif [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = true ]; then
+                        echo -e "${YELLOW}[-]${NC} Partial success: P4 profiles found, but P40 profiles still present"
+                        echo -e "${YELLOW}[-]${NC} This may indicate multiple GPUs or configuration conflict"
+                        echo -e "${YELLOW}[-]${NC} Try: systemctl restart nvidia-vgpu-mgr.service && sleep 20 && mdevctl types"
+                    elif [ "$p40_profiles_found" = true ]; then
+                        echo -e "${RED}[!]${NC} Tesla P4 fix may not have worked - still showing P40 profiles"
+                        echo -e "${YELLOW}[-]${NC} Configuration was applied but services may need more time or a system reboot"
+                        echo -e "${YELLOW}[-]${NC} Try: systemctl stop nvidia-vgpu-mgr nvidia-vgpud && sleep 10 && systemctl start nvidia-vgpud nvidia-vgpu-mgr"
                     else
-                        echo -e "${YELLOW}[-]${NC} No vGPU types detected yet"
-                        echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few minutes or after a reboot"
+                        if [ $retry_count -eq $max_retries ]; then
+                            echo -e "${YELLOW}[-]${NC} No specific P4 or P40 profiles detected after $max_retries attempts"
+                            echo -e "${YELLOW}[-]${NC} Services may need more time to initialize or a system reboot may be required"
+                            echo -e "${YELLOW}[-]${NC} Try waiting 2-3 minutes and then run: mdevctl types"
+                        else
+                            echo -e "${YELLOW}[-]${NC} No specific P4 or P40 profiles detected - this may be normal during initialization"
+                        fi
                     fi
                 else
                     echo -e "${YELLOW}[-]${NC} mdevctl not found, cannot verify vGPU types immediately"
@@ -536,6 +741,17 @@ apply_tesla_p4_fix() {
             else
                 echo -e "${RED}[!]${NC} Failed to copy Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
                 echo -e "${RED}[!]${NC} Tesla P4 fix could not be applied"
+                echo -e "${YELLOW}[-]${NC} Detailed diagnostics for copy failure:"
+                echo -e "${YELLOW}[-]${NC} 1. Source file status: $(ls -la "$config_path" 2>/dev/null || echo 'not accessible')"
+                echo -e "${YELLOW}[-]${NC} 2. Target directory status: $(ls -ld /usr/share/nvidia/vgpu 2>/dev/null || echo 'not accessible')"
+                echo -e "${YELLOW}[-]${NC} 3. Available disk space: $(df -h /usr/share/nvidia/vgpu 2>/dev/null | tail -1 | awk '{print $4}' || echo 'unknown')"
+                echo -e "${YELLOW}[-]${NC} 4. Current user: $(whoami) (UID: $(id -u))"
+                echo -e "${YELLOW}[-]${NC} 5. SELinux status: $(command -v getenforce >/dev/null && getenforce 2>/dev/null || echo 'not available')"
+                echo -e "${YELLOW}[-]${NC} Possible causes:"
+                echo -e "${YELLOW}[-]${NC} - Insufficient permissions (script must be run as root)"
+                echo -e "${YELLOW}[-]${NC} - Target directory read-only or full disk"
+                echo -e "${YELLOW}[-]${NC} - SELinux/AppArmor blocking file operations"
+                echo -e "${YELLOW}[-]${NC} - Source file corrupted or inaccessible"
             fi
         else
             # Try fallback configuration as last resort
@@ -547,9 +763,11 @@ apply_tesla_p4_fix() {
             if [ $fallback_result -eq 0 ] && [ -f "$fallback_config" ]; then
                 echo -e "${YELLOW}[-]${NC} Applying fallback Tesla P4 configuration"
                 
-                # Create nvidia vgpu directory if it doesn't exist
+                # Create nvidia vgpu directory if it doesn't exist with proper permissions checking
+                echo -e "${YELLOW}[-]${NC} Ensuring /usr/share/nvidia/vgpu directory exists for fallback configuration"
                 if ! mkdir -p "/usr/share/nvidia/vgpu"; then
-                    echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory"
+                    echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory for fallback"
+                    echo -e "${YELLOW}[-]${NC} Current user: $(whoami), UID: $(id -u)"
                     fallback_result=1
                 fi
                 
@@ -559,12 +777,43 @@ apply_tesla_p4_fix() {
                     echo -e "${YELLOW}[-]${NC} Backing up existing vgpuConfig.xml to $backup_file"
                     if ! cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file"; then
                         echo -e "${YELLOW}[-]${NC} Warning: Failed to backup existing configuration file"
+                        echo -e "${YELLOW}[-]${NC} Check file permissions: $(ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml 2>/dev/null || echo 'file not accessible')"
                     fi
                 fi
                 
-                # Apply fallback configuration
+                # Apply fallback configuration with enhanced verification
+                echo -e "${YELLOW}[-]${NC} Applying fallback Tesla P4 configuration"
+                echo -e "${YELLOW}[-]${NC} Source file: $fallback_config"
+                echo -e "${YELLOW}[-]${NC} Target file: /usr/share/nvidia/vgpu/vgpuConfig.xml"
+                
                 if cp "$fallback_config" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
-                    echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vGPU configuration applied successfully"
+                    echo -e "${GREEN}[+]${NC} Fallback Tesla P4 vGPU configuration copied successfully"
+                    
+                    # Set explicit permissions and ownership for the fallback configuration
+                    echo -e "${YELLOW}[-]${NC} Setting proper permissions on fallback configuration file"
+                    
+                    # Set file permissions (readable by owner, group, and others)
+                    if chmod 644 "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                        echo -e "${GREEN}[+]${NC} Fallback file permissions set to 644 (rw-r--r--)"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to set fallback file permissions"
+                    fi
+                    
+                    # Set ownership to root:root
+                    if chown root:root "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${GREEN}[+]${NC} Fallback file ownership set to root:root"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to set fallback file ownership"
+                    fi
+                    
+                    # Verify the fallback file is accessible
+                    if [ -r "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                        local file_size=$(stat -c%s "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || echo "0")
+                        echo -e "${GREEN}[+]${NC} Fallback configuration file is readable (${file_size} bytes)"
+                    else
+                        echo -e "${RED}[!]${NC} Fallback configuration file is not readable after copy"
+                        fallback_result=1
+                    fi
                     
                     # Verify configuration contains correct device ID
                     if grep -q "0x1BB3\|0x1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
@@ -581,56 +830,135 @@ apply_tesla_p4_fix() {
                         echo -e "${GREEN}[+]${NC} Confirmed: No P40 references found in configuration"
                     fi
                     
-                    # Restart nvidia-vgpu-mgr.service to load new configuration
-                    echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpu-mgr.service to load new configuration"
-                    if systemctl restart nvidia-vgpu-mgr.service; then
-                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
-                        sleep 10
+                    # Test fallback configuration file permissions
+                    if ! test_nvidia_config_permissions; then
+                        echo -e "${YELLOW}[-]${NC} Fallback configuration file permissions may prevent NVIDIA services from reading it"
+                        echo -e "${YELLOW}[-]${NC} This could explain persistent issues with P40 profile visibility"
+                    fi
+                    
+                    # Enhanced service restart sequence for fallback configuration
+                    echo -e "${YELLOW}[-]${NC} Restarting NVIDIA services to load new fallback configuration"
+                    
+                    # Stop services in reverse order first
+                    echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpu-mgr.service..."
+                    systemctl stop nvidia-vgpu-mgr.service 2>/dev/null || true
+                    
+                    echo -e "${YELLOW}[-]${NC} Stopping nvidia-vgpud.service..."
+                    systemctl stop nvidia-vgpud.service 2>/dev/null || true
+                    
+                    # Wait for services to fully stop
+                    echo -e "${YELLOW}[-]${NC} Waiting for services to fully stop..."
+                    sleep 5
+                    
+                    # Clear any potential driver cache (if nvidia-modprobe is available)
+                    if command -v nvidia-modprobe >/dev/null 2>&1; then
+                        echo -e "${YELLOW}[-]${NC} Clearing NVIDIA kernel module cache..."
+                        modprobe -r nvidia_vgpu_vfio nvidia 2>/dev/null || true
+                        sleep 2
+                        modprobe nvidia 2>/dev/null || true
+                    fi
+                    
+                    # Start services in correct order
+                    echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpud.service..."
+                    if systemctl start nvidia-vgpud.service; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpud.service started successfully"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Failed to start nvidia-vgpud.service"
+                    fi
+                    
+                    # Wait before starting the manager service
+                    sleep 5
+                    
+                    echo -e "${YELLOW}[-]${NC} Starting nvidia-vgpu-mgr.service..."
+                    if systemctl start nvidia-vgpu-mgr.service; then
+                        echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service started successfully"
                         
-                        # Also restart nvidia-vgpud service to ensure complete reload
-                        echo -e "${YELLOW}[-]${NC} Restarting nvidia-vgpud.service to ensure complete configuration reload"
-                        systemctl restart nvidia-vgpud.service 2>/dev/null || echo -e "${YELLOW}[-]${NC} nvidia-vgpud.service restart skipped (may not be running)"
-                        sleep 5
+                        # Give services more time to fully initialize and load configuration
+                        echo -e "${YELLOW}[-]${NC} Waiting for NVIDIA services to fully initialize with new configuration..."
+                        sleep 15
                         
-                        # Verify the fix worked with fallback
+                        # Additional verification that the service is actually running
+                        if systemctl is-active nvidia-vgpu-mgr.service >/dev/null 2>&1; then
+                            echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service is running and active"
+                        else
+                            echo -e "${YELLOW}[-]${NC} Warning: nvidia-vgpu-mgr.service may not be fully initialized"
+                        fi
+                    else
+                        echo -e "${RED}[!]${NC} Failed to start nvidia-vgpu-mgr.service"
+                        echo -e "${YELLOW}[-]${NC} Trying restart instead of start..."
+                        if systemctl restart nvidia-vgpu-mgr.service; then
+                            echo -e "${GREEN}[+]${NC} nvidia-vgpu-mgr.service restarted successfully"
+                            sleep 10
+                        else
+                            echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service"
+                            fallback_result=1
+                        fi
+                    fi
+                    
+                    # Only proceed with verification if service restart was successful
+                    if [ $fallback_result -eq 0 ]; then
+                        # Enhanced verification for fallback config with retry logic
                         echo -e "${YELLOW}[-]${NC} Verifying Tesla P4 vGPU types are available (fallback config)..."
                         if command -v mdevctl >/dev/null 2>&1; then
                             local mdev_output
                             local p4_profiles_found=false
                             local p40_profiles_found=false
+                            local retry_count=0
+                            local max_retries=3
                             
-                            # Get all mdevctl output
-                            mdev_output=$(timeout 20 mdevctl types 2>/dev/null || true)
-                            
-                            if [ -n "$mdev_output" ]; then
-                                # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
-                                if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
-                                    p4_profiles_found=true
-                                    echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available (using fallback config):"
-                                    echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                            # Retry verification with increasing delays
+                            while [ $retry_count -lt $max_retries ] && [ "$p4_profiles_found" = false ]; do
+                                if [ $retry_count -gt 0 ]; then
+                                    echo -e "${YELLOW}[-]${NC} Verification attempt $((retry_count + 1)) of $max_retries (fallback config)..."
+                                    sleep $((retry_count * 10))  # 10, 20, 30 seconds
                                 fi
                                 
-                                # Check if P40 profiles are still showing (this indicates the fix didn't work)
-                                if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
-                                    p40_profiles_found=true
-                                    echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected (fallback config may not have been applied correctly):"
-                                    echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                                # Get all mdevctl output with extended timeout
+                                mdev_output=$(timeout 30 mdevctl types 2>/dev/null || true)
+                                
+                                if [ -n "$mdev_output" ]; then
+                                    # Check for specific P4 profiles (should have "P4-" in name, not "P40-")
+                                    if echo "$mdev_output" | grep -q "GRID P4-\|Name: GRID P4-"; then
+                                        p4_profiles_found=true
+                                        echo -e "${GREEN}[+]${NC} Tesla P4 vGPU types are now available (using fallback config):"
+                                        echo "$mdev_output" | grep -A1 -B1 "GRID P4-" | head -10 | sed 's/^/  /'
+                                    fi
+                                    
+                                    # Check if P40 profiles are still showing (this indicates the fix didn't work)
+                                    if echo "$mdev_output" | grep -q "GRID P40-\|Name: GRID P40-"; then
+                                        p40_profiles_found=true
+                                        echo -e "${YELLOW}[-]${NC} Warning: P40 profiles are still detected (fallback config may not have been applied correctly):"
+                                        echo "$mdev_output" | grep -A1 -B1 "GRID P40-" | head -5 | sed 's/^/  /'
+                                    fi
+                                else
+                                    echo -e "${YELLOW}[-]${NC} No vGPU types detected on attempt $((retry_count + 1)) (fallback config)"
                                 fi
                                 
-                                if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
-                                    echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration applied successfully"
-                                    echo -e "${YELLOW}[-]${NC} Note: Using fallback configuration. For optimal performance, manually apply official config later."
-                                elif [ "$p40_profiles_found" = true ]; then
-                                    echo -e "${RED}[!]${NC} Tesla P4 fallback fix may not have worked - still showing P40 profiles"
-                                    echo -e "${YELLOW}[-]${NC} The fallback configuration was applied, but the system is still loading incorrect profiles"
-                                    echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting the system"
+                                retry_count=$((retry_count + 1))
+                            done
+                            
+                            # Final assessment for fallback config
+                            if [ "$p4_profiles_found" = true ] && [ "$p40_profiles_found" = false ]; then
+                                echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration applied successfully"
+                                echo -e "${YELLOW}[-]${NC} Note: Using fallback configuration. For optimal performance, manually apply official config later."
+                            elif [ "$p40_profiles_found" = true ]; then
+                                echo -e "${RED}[!]${NC} Tesla P4 fallback fix may not have worked - still showing P40 profiles"
+                                echo -e "${YELLOW}[-]${NC} The fallback configuration was applied, but the system is still loading incorrect profiles"
+                                echo -e "${YELLOW}[-]${NC} Try restarting the nvidia-vgpu-mgr service manually or rebooting the system"
+                                echo -e "${YELLOW}[-]${NC} Additional commands to try:"
+                                echo -e "${YELLOW}[-]${NC}   systemctl stop nvidia-vgpu-mgr nvidia-vgpud"
+                                echo -e "${YELLOW}[-]${NC}   sleep 10"
+                                echo -e "${YELLOW}[-]${NC}   systemctl start nvidia-vgpud nvidia-vgpu-mgr"
+                                echo -e "${YELLOW}[-]${NC}   sleep 20 && mdevctl types"
+                            else
+                                if [ $retry_count -eq $max_retries ]; then
+                                    echo -e "${YELLOW}[-]${NC} Fallback config applied, but no P4 or P40 profiles detected after $max_retries attempts"
+                                    echo -e "${YELLOW}[-]${NC} Services may need more time to initialize or a system reboot may be required"
+                                    echo -e "${YELLOW}[-]${NC} Try waiting 2-3 minutes and then run: mdevctl types"
                                 else
                                     echo -e "${YELLOW}[-]${NC} Fallback config applied, but no P4 or P40 profiles detected yet"
                                     echo -e "${YELLOW}[-]${NC} This may be normal - try 'mdevctl types' after a few minutes or after a reboot"
                                 fi
-                            else
-                                echo -e "${YELLOW}[-]${NC} Fallback config applied, but vGPU types not yet visible"
-                                echo -e "${YELLOW}[-]${NC} Try 'mdevctl types' after a few minutes or reboot"
                             fi
                         fi
                         
@@ -639,11 +967,16 @@ apply_tesla_p4_fix() {
                         
                         echo -e "${GREEN}[+]${NC} Tesla P4 fallback configuration fix completed"
                     else
-                        echo -e "${YELLOW}[-]${NC} Warning: Failed to restart nvidia-vgpu-mgr.service"
+                        echo -e "${YELLOW}[-]${NC} Warning: Service restart failed, skipping verification"
                         fallback_result=1
                     fi
                 else
                     echo -e "${RED}[!]${NC} Failed to apply fallback Tesla P4 vgpuConfig.xml"
+                    echo -e "${YELLOW}[-]${NC} Fallback copy operation failed - detailed diagnostics:"
+                    echo -e "${YELLOW}[-]${NC} 1. Fallback source file: $(ls -la "$fallback_config" 2>/dev/null || echo 'not accessible')"
+                    echo -e "${YELLOW}[-]${NC} 2. Target directory: $(ls -ld /usr/share/nvidia/vgpu 2>/dev/null || echo 'not accessible')"
+                    echo -e "${YELLOW}[-]${NC} 3. File system space: $(df -h /usr/share/nvidia/vgpu 2>/dev/null | tail -1 | awk '{print "Used: "$3", Available: "$4}' || echo 'unknown')"
+                    echo -e "${YELLOW}[-]${NC} This suggests a fundamental permissions or system issue"
                     fallback_result=1
                 fi
             fi
