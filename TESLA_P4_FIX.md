@@ -12,35 +12,30 @@ Tesla P4 cards have an issue where `nvidia-vgpu-mgr.service` loads incorrect mde
 
 ## Solution
 
-The installer now automatically detects Tesla P4 cards and applies a robust configuration fix with multiple fallback mechanisms:
+The installer now automatically detects Tesla P4 cards and applies a simple configuration fix:
 
 1. **Detection**: Automatically detects Tesla P4 GPUs (device ID `1bb3`)
 2. **Network Check**: Verifies internet connectivity before attempting downloads
 3. **Primary Download**: Downloads NVIDIA driver 16.4 (535.161.05) with retry logic
-4. **Fallback Download**: Checks for existing local driver files
-5. **Configuration Fallback**: Uses built-in Tesla P4 config if download fails
-6. **Application**: Copies the correct configuration to `/usr/share/nvidia/vgpu/vgpuConfig.xml`
-7. **Service Restart**: Restarts `nvidia-vgpu-mgr.service` to load the new configuration
-8. **Verification**: Verifies that P4 vGPU types are now available via `mdevctl types`
+4. **Local Check**: Checks for existing local driver files if download fails
+5. **Application**: Copies the correct configuration to `/usr/share/nvidia/vgpu/vgpuConfig.xml`
+6. **Reboot Required**: System must be rebooted for changes to take effect
 
 ## Enhanced Error Handling
 
-The fix now includes comprehensive error handling and verification:
+The fix now includes comprehensive error handling:
 
-### Improved Verification (v1.2+)
-- **Specific P4/P40 Detection**: Now distinguishes between "GRID P4-" and "GRID P40-" profiles
-- **Configuration Validation**: Verifies vgpuConfig.xml contains Tesla P4 device ID (1BB3)  
-- **Enhanced Service Management**: Extended restart timing for better reliability
-- **Status Reporting**: Clear success/failure indicators with specific recommendations
+### Simplified Approach (v1.2+)
+- **No service restarts**: System reboot required instead of unreliable service restarts
+- **No fallback configuration**: Only uses official NVIDIA vgpuConfig.xml from driver 16.4
+- **Clear messaging**: Users are informed that reboot is required, not service management
+- **Reduced complexity**: Eliminates complex verification and retry logic that was unreliable
 
-### Legacy Features
-- **Multiple retry attempts** with exponential backoff for downloads
-- **Alternative download methods** when primary method fails
-- **Built-in fallback configuration** when all downloads fail
-- **Comprehensive error reporting** with specific failure reasons
-- **Detailed troubleshooting guide** with actionable next steps
-- **Network connectivity checks** before attempting downloads
-- **Command-line options** for manual troubleshooting
+### Legacy Features (Removed)
+- **Multiple retry attempts**: Removed - single attempt with clear failure messaging
+- **Service restart logic**: Removed - system reboot required instead  
+- **Built-in fallback configuration**: Removed - only official NVIDIA config used
+- **Complex verification loops**: Removed - verification happens after reboot
 
 ## How It Works
 
@@ -56,9 +51,9 @@ The fix automatically detects Tesla P4 GPUs during the installation process:
 The Tesla P4 fix is applied automatically during Step 2 of the installation:
 
 1. Driver is installed normally
-2. NVIDIA services are started
-3. **Tesla P4 fix is applied automatically** (new)
-4. Installation completes
+2. Tesla P4 fix is applied automatically (copies correct vgpuConfig.xml)
+3. System reboot required for changes to take effect
+4. After reboot, Tesla P4 profiles should be available
 
 ### User Messages
 Users with Tesla P4 cards will see additional messages during installation:
@@ -66,7 +61,7 @@ Users with Tesla P4 cards will see additional messages during installation:
 **Successful Installation:**
 ```
 [+] Tesla P4 GPU detected - applying vGPU configuration fix
-[+] Tesla P4 detected - downloading driver 16.4 for vgpuConfig.xml
+[-] This fix replaces vgpuConfig.xml with the correct Tesla P4 configuration from driver 16.4
 [-] Checking network connectivity for Tesla P4 fix...
 [+] Network connectivity verified
 [-] Attempting download using megadl (method 1/3)
@@ -75,50 +70,28 @@ Users with Tesla P4 cards will see additional messages during installation:
 [+] Tesla P4 driver MD5 checksum verified
 [+] Tesla P4 vgpuConfig.xml extracted successfully
 [+] Installing Tesla P4 vgpuConfig.xml to /usr/share/nvidia/vgpu/
+[+] File copied successfully
 [+] Tesla P4 vGPU configuration applied successfully
-[-] Restarting nvidia-vgpu-mgr.service to load new configuration
-[+] nvidia-vgpu-mgr.service restarted successfully
-[+] Tesla P4 vGPU types are now available:
-    nvidia-222 ( 1 of  4GB)
-    nvidia-223 ( 2 of  4GB) 
-    nvidia-224 ( 4 of  4GB)
-    nvidia-252 ( 1 of  8GB)
-    nvidia-253 ( 2 of  8GB)
-[+] Tesla P4 vGPU configuration fix completed successfully
+[+] Configuration contains Tesla P4 device ID (1BB3)
+[+] Tesla P4 vGPU configuration fix completed
+[-] REBOOT REQUIRED: System must be rebooted for changes to take effect
+[-] After reboot, Tesla P4 should show P4 profiles instead of P40 profiles
+[-] Verify with: mdevctl types | grep -i 'p4-'
+```
 ```
 
-**Download Failed with Fallback:**
+**Download Failed:**
 ```
 [+] Tesla P4 GPU detected - applying vGPU configuration fix
-[-] This fix resolves the issue where Tesla P4 shows P40 profiles or no profiles
-[!] Failed to download Tesla P4 driver after multiple attempts
-[-] Primary Tesla P4 fix failed, trying fallback configuration...
-[-] Creating fallback Tesla P4 vgpuConfig.xml
-[+] Fallback Tesla P4 vgpuConfig.xml created successfully
-[+] Fallback Tesla P4 vGPU configuration applied successfully
-[+] Tesla P4 vGPU types are now available (using fallback config):
-    nvidia-222 ( 1 of  4GB)
-    nvidia-223 ( 2 of  4GB)
-[-] Note: Using fallback configuration. For optimal performance, manually apply official config later.
-[+] Tesla P4 fallback configuration fix completed
-```
-
-**Complete Failure:**
-```
-[+] Tesla P4 GPU detected - applying vGPU configuration fix
-[-] This fix resolves the issue where Tesla P4 shows P40 profiles or no profiles
-[!] Failed to download Tesla P4 configuration, skipping fix
-[-] Tesla P4 may show incorrect vGPU profiles
+[-] This fix replaces vgpuConfig.xml with the correct Tesla P4 configuration from driver 16.4
+[!] Failed to download Tesla P4 configuration
 [-] Manual fix instructions:
-[-] 1. Download NVIDIA driver 16.4: NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run
-[-] 2. Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x
-[-] 3. Copy config: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/
-[-] 4. Restart service: systemctl restart nvidia-vgpu-mgr.service
-[-] 5. Verify: mdevctl types | grep -i tesla
-[-] For more details, see: /path/to/TESLA_P4_FIX.md
-[INFO] Tesla P4 Troubleshooting Guide
-======================================
-[Complete troubleshooting guide appears here]
+[-] 1. Install v17.0 driver first using this installer
+[-] 2. Download NVIDIA driver 16.4: NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run
+[-] 3. Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x
+[-] 4. Copy config: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/
+[-] 5. Reboot system
+[-] 6. Verify: mdevctl types | grep -i 'p4-'
 ```
 
 ### Command Line Options
@@ -254,10 +227,10 @@ ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml
 ## Troubleshooting
 
 ### No vGPU Types After Fix
-1. Wait a few minutes and try `mdevctl types` again
-2. Restart the service: `systemctl restart nvidia-vgpu-mgr.service`
+1. Reboot the system (required for configuration changes)
+2. After reboot, try `mdevctl types` again
 3. Check service logs: `journalctl -u nvidia-vgpu-mgr.service`
-4. Reboot the system if needed
+4. Verify configuration file: `ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml`
 
 ### Fix Not Applied
 1. Verify Tesla P4 detection: `lspci -nn | grep 1bb3`
@@ -268,10 +241,11 @@ ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml
 ### Manual Fix Application
 If the automatic fix fails, you can apply it manually:
 
-1. Download driver 16.4 manually
+1. Download driver 16.4 manually from alternative sources
 2. Extract with: `./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x`
 3. Copy config: `cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/`
-4. Restart service: `systemctl restart nvidia-vgpu-mgr.service`
+4. Reboot system: `reboot`
+5. Verify: `mdevctl types | grep -i 'p4-'`
 
 ## Acknowledgments
 
