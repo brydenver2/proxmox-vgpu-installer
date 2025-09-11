@@ -78,7 +78,32 @@ Changes in version 1.2
 - Use Docker for hosting FastAPI-DLS (licensing) or using this docker [fastapi-dls](https://github.com/GreenDamTan/fastapi-dls_mirror) container on any host or capable server
 - Create Powershell (ps1) and Bash (sh) files to retrieve licenses from FastAPI-DLS
 
-## Multi-GPU vGPU Configuration
+## Tesla P4 Enhanced Support
+
+### Automatic P4 Profile Fix
+Tesla P4 cards automatically receive the correct vGPU profiles during installation, preventing the common issue where P40 profiles are shown instead of P4 profiles.
+
+### v17 Driver Installation Workflow  
+**NEW**: Tesla P4 cards with v17.0 driver selection now use an enhanced installation workflow:
+- Automatically installs v16.1 base driver first
+- Upgrades to v17.0 to prevent kernel module compilation failures
+- Provides enhanced error handling and fallback options
+- See `TESLA_P4_V17_UPGRADE.md` for detailed information
+
+### Command Line Tools
+```bash
+# Check Tesla P4 status and diagnose issues
+./proxmox-installer.sh --tesla-p4-status
+
+# Apply Tesla P4 configuration fix only
+./proxmox-installer.sh --tesla-p4-fix
+
+# Show comprehensive troubleshooting guide
+./proxmox-installer.sh --tesla-p4-help
+
+# Test v16→v17 upgrade workflow detection
+./proxmox-installer.sh --tesla-p4-upgrade-test
+```
 
 ### NVIDIA vGPU 16.0 Compliance Features
 

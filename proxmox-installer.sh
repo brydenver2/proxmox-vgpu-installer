@@ -153,13 +153,19 @@ show_tesla_p4_troubleshooting() {
     echo -e "   • Check service status: systemctl status nvidia-vgpu-mgr.service"
     echo -e "   • Reboot system if needed"
     echo ""
-    echo -e "${YELLOW}5. How to verify Tesla P4 profiles are working:${NC}"
+    echo -e "${YELLOW}5. Tesla P4 + v17.0 driver installation failures:${NC}"
+    echo -e "   • Tesla P4 cards need v16 driver installed first, then upgrade to v17"
+    echo -e "   • This installer automatically handles this workflow when you select v17.0"
+    echo -e "   • If kernel module compilation fails, check kernel headers are installed"
+    echo -e "   • Use 'apt install proxmox-headers-\$(uname -r | cut -d'-' -f1,2)'"
+    echo ""
+    echo -e "${YELLOW}6. How to verify Tesla P4 profiles are working:${NC}"
     echo -e "   • Run: mdevctl types | grep -i 'p4-'"
     echo -e "   • Should show profiles like 'GRID P4-1Q', 'GRID P4-2Q', etc."
     echo -e "   • Should NOT show 'GRID P40-' profiles"
     echo -e "   • If you see P40 profiles, the fix needs to be applied"
     echo ""
-    echo -e "${YELLOW}6. Manual fix steps if automatic fix fails:${NC}"
+    echo -e "${YELLOW}7. Manual fix steps if automatic fix fails:${NC}"
     echo -e "   • Download: wget -O NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run [URL]"
     echo -e "   • Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x"
     echo -e "   • Copy: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/"
@@ -398,7 +404,121 @@ download_tesla_p4_config() {
     fi
 }
 
-# Function to apply Tesla P4 vGPU configuration fix
+# Function to check if Tesla P4 needs v16→v17 upgrade workflow
+needs_tesla_p4_upgrade_workflow() {
+    local selected_driver="$1"
+    
+    # Check if Tesla P4 is present and v17 driver is being installed
+    if detect_tesla_p4 && [[ "$selected_driver" == *"550.54."* ]]; then
+        return 0  # Yes, needs upgrade workflow
+    fi
+    return 1  # No upgrade workflow needed
+}
+
+# Function to perform Tesla P4 v16→v17 upgrade workflow
+perform_tesla_p4_upgrade_workflow() {
+    local target_v17_driver="$1"
+    local target_v17_version="$2"
+    
+    echo ""
+    echo -e "${BLUE}Tesla P4 v16→v17 Upgrade Workflow${NC}"
+    echo -e "${BLUE}==================================${NC}"
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Tesla P4 detected with v17.0 driver selection"
+    echo -e "${YELLOW}[-]${NC} Tesla P4 cards require v16 driver installation first, then upgrade to v17"
+    echo -e "${YELLOW}[-]${NC} This prevents kernel module compilation failures during direct v17 installation"
+    echo ""
+    
+    # Choose appropriate v16 driver for the upgrade path
+    local base_v16_driver="NVIDIA-Linux-x86_64-535.104.06-vgpu-kvm.run"  # v16.1 - stable base
+    local base_v16_url="https://mega.nz/file/wy1WVCaZ#Yq2Pz_UOfydHy8nC_X_nloR4NIFC1iZFHqJN0EiAicU"
+    local base_v16_md5="1020ad5b89fa0570c27786128385ca48"
+    
+    echo -e "${GREEN}[+]${NC} Step 1: Installing v16.1 base driver for Tesla P4"
+    echo -e "${YELLOW}[-]${NC} Base driver: $base_v16_driver"
+    
+    # Download v16 driver if not present
+    if [ ! -f "$base_v16_driver" ]; then
+        echo -e "${YELLOW}[-]${NC} Downloading Tesla P4 base driver v16.1..."
+        
+        if ! command -v megadl >/dev/null 2>&1; then
+            run_command "Installing megatools for Tesla P4 upgrade workflow" "info" "apt update && apt install -y megatools"
+        fi
+        
+        if ! megadl "$base_v16_url"; then
+            echo -e "${RED}[!]${NC} Failed to download v16.1 base driver for Tesla P4 upgrade workflow"
+            echo -e "${YELLOW}[-]${NC} Please manually download: $base_v16_driver"
+            echo -e "${YELLOW}[-]${NC} And place it in: $VGPU_DIR"
+            return 1
+        fi
+        
+        # Verify MD5
+        local downloaded_md5=$(md5sum "$base_v16_driver" | awk '{print $1}')
+        if [ "$downloaded_md5" != "$base_v16_md5" ]; then
+            echo -e "${YELLOW}[-]${NC} MD5 checksum mismatch for v16.1 base driver"
+            echo -e "${YELLOW}[-]${NC} Expected: $base_v16_md5"
+            echo -e "${YELLOW}[-]${NC} Got: $downloaded_md5"
+            echo -e "${YELLOW}[-]${NC} Continuing anyway..."
+        else
+            echo -e "${GREEN}[+]${NC} v16.1 base driver MD5 verified"
+        fi
+    else
+        echo -e "${GREEN}[+]${NC} v16.1 base driver already present"
+    fi
+    
+    # Install v16 base driver
+    chmod +x "$base_v16_driver"
+    echo -e "${YELLOW}[-]${NC} Installing v16.1 base driver (this prepares the system for v17 upgrade)..."
+    
+    # Enhanced error handling for v16 installation
+    if ! run_command "Installing Tesla P4 v16.1 base driver" "info" "./$base_v16_driver --dkms -m=kernel -s" false; then
+        echo -e "${RED}[!]${NC} Failed to install v16.1 base driver"
+        echo -e "${YELLOW}[-]${NC} Tesla P4 v16→v17 upgrade workflow cannot continue"
+        return 1
+    fi
+    
+    echo -e "${GREEN}[+]${NC} v16.1 base driver installed successfully"
+    echo ""
+    
+    # Wait for v16 installation to stabilize
+    echo -e "${YELLOW}[-]${NC} Waiting for v16 driver to stabilize before v17 upgrade..."
+    sleep 10
+    
+    # Now install v17 as an upgrade over v16
+    echo -e "${GREEN}[+]${NC} Step 2: Upgrading to v17.0 driver"
+    echo -e "${YELLOW}[-]${NC} Target driver: $target_v17_driver"
+    
+    # Make sure v17 driver is executable
+    chmod +x "$target_v17_driver"
+    
+    # Install v17 driver with upgrade-specific flags
+    echo -e "${YELLOW}[-]${NC} Installing v17.0 as upgrade over v16.1 (Tesla P4 upgrade workflow)..."
+    
+    # Enhanced error handling for v17 upgrade with more detailed logging
+    if ! run_command "Upgrading to Tesla P4 v17.0 driver" "info" "./$target_v17_driver --dkms -m=kernel -s --force-update" false; then
+        echo -e "${RED}[!]${NC} Failed to upgrade to v17.0 driver"
+        echo -e "${YELLOW}[-]${NC} Tesla P4 v16→v17 upgrade workflow failed during v17 installation"
+        echo -e "${YELLOW}[-]${NC} The v16.1 base driver should still be functional"
+        echo -e "${YELLOW}[-]${NC} Check /var/log/nvidia-installer.log for detailed error information"
+        
+        # Provide fallback guidance
+        echo ""
+        echo -e "${BLUE}Fallback Options:${NC}"
+        echo -e "${YELLOW}1.${NC} Continue with v16.1 driver (functional for Tesla P4)"
+        echo -e "${YELLOW}2.${NC} Check kernel compatibility with: uname -r"
+        echo -e "${YELLOW}3.${NC} Ensure kernel headers are installed: apt install proxmox-headers-\$(uname -r | cut -d'-' -f1,2)"
+        echo -e "${YELLOW}4.${NC} Review kernel module compilation errors in nvidia-installer.log"
+        
+        return 1
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Tesla P4 v16→v17 upgrade workflow completed successfully"
+    echo -e "${GREEN}[+]${NC} v17.0 driver installed as upgrade over v16.1 base"
+    echo ""
+    
+    return 0
+}
+
 # Function to apply Tesla P4 vGPU configuration fix
 apply_tesla_p4_fix() {
     # Only apply fix if Tesla P4 is detected
@@ -482,7 +602,7 @@ apply_tesla_p4_fix() {
 
 # Function to display usage information
 display_usage() {
-    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help] [--tesla-p4-status]"
+    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help] [--tesla-p4-status] [--tesla-p4-upgrade-test]"
     echo -e ""
     echo -e "Options:"
     echo -e "  --debug               Enable debug mode with verbose output"
@@ -493,6 +613,7 @@ display_usage() {
     echo -e "  --tesla-p4-fix        Run Tesla P4 vGPU configuration fix only"
     echo -e "  --tesla-p4-help       Show Tesla P4 troubleshooting guide"
     echo -e "  --tesla-p4-status     Check Tesla P4 vGPU profile status"
+    echo -e "  --tesla-p4-upgrade-test  Test Tesla P4 v16→v17 upgrade workflow"
     echo -e ""
     exit 1
 }
@@ -605,6 +726,30 @@ while [[ $# -gt 0 ]]; do
             else
                 echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
                 echo -e "${YELLOW}[-]${NC} This check is only for systems with Tesla P4 GPUs (device ID 1bb3)"
+            fi
+            echo ""
+            exit 0
+            ;;
+        --tesla-p4-upgrade-test)
+            # Test Tesla P4 v16→v17 upgrade workflow
+            echo ""
+            echo -e "${BLUE}Tesla P4 v16→v17 Upgrade Workflow Test${NC}"
+            echo -e "${BLUE}======================================${NC}"
+            echo ""
+            if detect_tesla_p4; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 detected, testing upgrade workflow..."
+                # Simulate v17.0 driver selection for testing
+                test_driver="NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run"
+                if needs_tesla_p4_upgrade_workflow "$test_driver"; then
+                    echo -e "${GREEN}[+]${NC} Tesla P4 upgrade workflow condition met"
+                    echo -e "${YELLOW}[-]${NC} This would trigger the v16→v17 upgrade process"
+                    echo -e "${YELLOW}[-]${NC} In normal installation, this prevents kernel module compilation failures"
+                else
+                    echo -e "${YELLOW}[-]${NC} Tesla P4 upgrade workflow condition not met for test driver"
+                fi
+            else
+                echo -e "${YELLOW}[-]${NC} No Tesla P4 GPU detected in this system"
+                echo -e "${YELLOW}[-]${NC} This test is only for systems with Tesla P4 GPUs (device ID 1bb3)"
             fi
             echo ""
             exit 0
@@ -2134,6 +2279,15 @@ case $STEP in
                     echo -e "${YELLOW}[-]${NC} Your Nvidia GPU is supported by driver version 16.x"
                 fi
             fi
+            
+            # Special guidance for Tesla P4 users
+            if detect_tesla_p4; then
+                echo ""
+                echo -e "${BLUE}Tesla P4 Special Installation Notes:${NC}"
+                echo -e "${YELLOW}[-]${NC} Tesla P4 detected - enhanced installation workflow available"
+                echo -e "${YELLOW}[-]${NC} For v17.0 driver: Automatic v16→v17 upgrade workflow prevents compilation failures"
+                echo -e "${YELLOW}[-]${NC} For other drivers: Standard installation with Tesla P4 profile fix applied"
+            fi
 
             echo ""
             echo "Select vGPU driver version:"
@@ -2432,8 +2586,37 @@ case $STEP in
             fi
         fi
 
-        # Patch and install the driver only if vGPU is not native
-        if [ "$VGPU_SUPPORT" = "Yes" ]; then
+        # Check if Tesla P4 needs special v16→v17 upgrade workflow
+        if needs_tesla_p4_upgrade_workflow "$driver_filename"; then
+            echo ""
+            echo -e "${BLUE}Tesla P4 Special Installation Workflow Detected${NC}"
+            echo -e "${BLUE}===============================================${NC}"
+            echo ""
+            echo -e "${YELLOW}[-]${NC} Tesla P4 + v17.0 driver combination detected"
+            echo -e "${YELLOW}[-]${NC} Using enhanced installation workflow to prevent kernel module compilation failures"
+            
+            # Perform the special Tesla P4 v16→v17 upgrade workflow
+            if perform_tesla_p4_upgrade_workflow "$driver_filename" "$driver_version"; then
+                echo -e "${GREEN}[+]${NC} Tesla P4 v16→v17 upgrade workflow completed successfully"
+                write_log "Tesla P4 v16→v17 upgrade workflow completed successfully"
+                
+                # Skip normal driver installation since Tesla P4 workflow handled it
+                echo -e "${YELLOW}[-]${NC} Skipping standard driver installation (Tesla P4 upgrade workflow completed)"
+                
+                # Jump to post-installation steps
+                tesla_p4_workflow_completed=true
+            else
+                echo -e "${RED}[!]${NC} Tesla P4 v16→v17 upgrade workflow failed"
+                echo -e "${YELLOW}[-]${NC} Falling back to standard installation (may fail with kernel module errors)"
+                write_log "Tesla P4 v16→v17 upgrade workflow failed, falling back to standard installation"
+                tesla_p4_workflow_completed=false
+            fi
+        else
+            tesla_p4_workflow_completed=false
+        fi
+
+        # Patch and install the driver only if vGPU is not native and Tesla P4 workflow didn't complete
+        if [ "$tesla_p4_workflow_completed" = "false" ] && [ "$VGPU_SUPPORT" = "Yes" ]; then
             write_log "Installing vGPU driver with patching for non-native vGPU support"
             
             # Check if patch file exists first
@@ -2490,7 +2673,7 @@ case $STEP in
                 run_command "Installing original driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
             fi
             
-        elif [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Unknown" ]; then
+        elif [ "$tesla_p4_workflow_completed" = "false" ] && ([ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Unknown" ]); then
             write_log "Installing native vGPU driver (no patching required)"
             
             # Run the regular driver installer
@@ -2498,7 +2681,7 @@ case $STEP in
             log_system_info "kernel"  # Log kernel state before installation
             run_command "Installing native driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
             
-        else
+        elif [ "$tesla_p4_workflow_completed" = "false" ]; then
             echo -e "${RED}[!]${NC} Unknown or unsupported GPU: $VGPU_SUPPORT"
             write_log "ERROR: Unknown GPU support type: $VGPU_SUPPORT"
             echo ""
@@ -2507,8 +2690,14 @@ case $STEP in
             exit 1
         fi
 
-        echo -e "${GREEN}[+]${NC} Driver installed successfully."
-        write_log "Driver installation completed successfully"
+        # If Tesla P4 workflow completed successfully, we can skip to post-installation
+        if [ "$tesla_p4_workflow_completed" = "true" ]; then
+            echo -e "${GREEN}[+]${NC} Tesla P4 driver installation completed via upgrade workflow"
+            write_log "Tesla P4 driver installation completed via upgrade workflow"
+        else
+            echo -e "${GREEN}[+]${NC} Driver installed successfully."
+            write_log "Driver installation completed successfully"
+        fi
         
         # Log post-installation system state
         log_system_info "kernel"
