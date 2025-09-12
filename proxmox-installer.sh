@@ -415,6 +415,103 @@ needs_tesla_p4_upgrade_workflow() {
     return 1  # No upgrade workflow needed
 }
 
+# Function to analyze NVIDIA installation errors and provide specific guidance
+analyze_nvidia_installation_error() {
+    local log_file="/var/log/nvidia-installer.log"
+    
+    echo ""
+    echo -e "${BLUE}Analyzing Installation Error${NC}"
+    echo -e "${BLUE}============================${NC}"
+    
+    if [ ! -f "$log_file" ]; then
+        echo -e "${YELLOW}[-]${NC} nvidia-installer.log not found at $log_file"
+        provide_general_fallback_guidance
+        return 1
+    fi
+    
+    # Check for specific known errors
+    if grep -q "iommu_ops" "$log_file" 2>/dev/null; then
+        handle_iommu_ops_error
+    elif grep -q "compiler differs from the one used to build the kernel" "$log_file" 2>/dev/null; then
+        handle_compiler_mismatch_error
+    elif grep -q "No such file or directory.*kernel.*build" "$log_file" 2>/dev/null; then
+        handle_missing_kernel_headers_error
+    else
+        echo -e "${YELLOW}[-]${NC} Analyzing general compilation errors..."
+        provide_general_fallback_guidance
+    fi
+}
+
+# Function to handle iommu_ops kernel API compatibility error
+handle_iommu_ops_error() {
+    echo -e "${RED}[!]${NC} Detected kernel API compatibility issue: iommu_ops error"
+    echo -e "${YELLOW}[-]${NC} The v17.0 driver is incompatible with your kernel version"
+    echo ""
+    echo -e "${BLUE}Specific Issue:${NC}"
+    echo -e "${YELLOW}•${NC} Kernel 6.8+ removed 'iommu_ops' from 'bus_type' struct"
+    echo -e "${YELLOW}•${NC} NVIDIA v17.0 driver (550.54.10) expects old kernel API"
+    echo -e "${YELLOW}•${NC} This causes compilation failure during kernel module build"
+    echo ""
+    
+    local current_kernel=$(uname -r)
+    echo -e "${BLUE}Recommended Solutions:${NC}"
+    echo -e "${GREEN}1. Use compatible driver version:${NC}"
+    echo -e "   • Install v16.9 (535.230.02) instead - fully compatible with $current_kernel"
+    echo -e "   • Run: ./proxmox-installer.sh and select option 7"
+    echo ""
+    echo -e "${GREEN}2. Use older kernel version:${NC}"
+    echo -e "   • Install kernel 6.5.x which is compatible with v17.0"
+    echo -e "   • Command: apt install proxmox-kernel-6.5"
+    echo -e "   • Reboot and select 6.5 kernel in GRUB menu"
+    echo ""
+    echo -e "${GREEN}3. Continue with v16.1 base driver:${NC}"
+    echo -e "   • The v16.1 driver is already installed and should work"
+    echo -e "   • Tesla P4 vGPU profiles will be available"
+    echo -e "   • Run: systemctl restart nvidia-vgpu-mgr && mdevctl types | grep P4"
+    echo ""
+    echo -e "${YELLOW}Note:${NC} This is a known limitation with v17.0 driver on newer kernels"
+}
+
+# Function to handle compiler mismatch errors
+handle_compiler_mismatch_error() {
+    echo -e "${YELLOW}[-]${NC} Detected compiler version mismatch"
+    echo -e "${YELLOW}[-]${NC} The kernel was built with a different compiler version"
+    echo ""
+    echo -e "${BLUE}Solution:${NC}"
+    echo -e "${YELLOW}•${NC} This is usually a warning and shouldn't prevent installation"
+    echo -e "${YELLOW}•${NC} If compilation still fails, check for other errors in the log"
+    echo -e "${YELLOW}•${NC} Consider updating system: apt update && apt upgrade"
+}
+
+# Function to handle missing kernel headers error
+handle_missing_kernel_headers_error() {
+    local current_kernel=$(uname -r)
+    local kernel_base=$(echo "$current_kernel" | cut -d'-' -f1,2)
+    
+    echo -e "${RED}[!]${NC} Missing kernel headers detected"
+    echo -e "${YELLOW}[-]${NC} Kernel headers are required for driver compilation"
+    echo ""
+    echo -e "${BLUE}Solution:${NC}"
+    echo -e "${GREEN}Install kernel headers:${NC}"
+    echo -e "   apt install proxmox-headers-$kernel_base"
+    echo -e "   # or"
+    echo -e "   apt install pve-headers-$current_kernel"
+    echo ""
+    echo -e "Then retry the installation."
+}
+
+# Function to provide general fallback guidance
+provide_general_fallback_guidance() {
+    echo -e "${YELLOW}[-]${NC} Check /var/log/nvidia-installer.log for detailed error information"
+    echo ""
+    echo -e "${BLUE}General Fallback Options:${NC}"
+    echo -e "${YELLOW}1.${NC} Continue with v16.1 driver (functional for Tesla P4)"
+    echo -e "${YELLOW}2.${NC} Check kernel compatibility with: uname -r"
+    echo -e "${YELLOW}3.${NC} Ensure kernel headers are installed: apt install proxmox-headers-\$(uname -r | cut -d'-' -f1,2)"
+    echo -e "${YELLOW}4.${NC} Try alternative driver version (v16.9 recommended for newer kernels)"
+    echo -e "${YELLOW}5.${NC} Consider kernel downgrade to 6.5.x for v17.0 compatibility"
+}
+
 # Function to perform Tesla P4 v16→v17 upgrade workflow
 perform_tesla_p4_upgrade_workflow() {
     local target_v17_driver="$1"
@@ -494,20 +591,28 @@ perform_tesla_p4_upgrade_workflow() {
     # Install v17 driver with upgrade-specific flags
     echo -e "${YELLOW}[-]${NC} Installing v17.0 as upgrade over v16.1 (Tesla P4 upgrade workflow)..."
     
+    # Check kernel compatibility before attempting v17 installation
+    local current_kernel=$(uname -r)
+    local kernel_version=$(echo "$current_kernel" | cut -d'-' -f1)
+    
+    echo -e "${YELLOW}[-]${NC} Checking kernel compatibility for v17.0 driver..."
+    echo -e "${YELLOW}[-]${NC} Current kernel: $current_kernel"
+    
+    # Check for known problematic kernel versions
+    if [[ "$kernel_version" =~ ^6\.8\. ]]; then
+        echo -e "${YELLOW}[-]${NC} Warning: Kernel 6.8.x has known API compatibility issues with v17.0 driver"
+        echo -e "${YELLOW}[-]${NC} The driver may fail to compile due to kernel API changes (iommu_ops removal)"
+        echo -e "${YELLOW}[-]${NC} Attempting installation with enhanced error detection..."
+    fi
+    
     # Enhanced error handling for v17 upgrade with more detailed logging
     if ! run_command "Upgrading to Tesla P4 v17.0 driver" "info" "./$target_v17_driver --dkms -m=kernel -s --force-update" false; then
         echo -e "${RED}[!]${NC} Failed to upgrade to v17.0 driver"
         echo -e "${YELLOW}[-]${NC} Tesla P4 v16→v17 upgrade workflow failed during v17 installation"
         echo -e "${YELLOW}[-]${NC} The v16.1 base driver should still be functional"
-        echo -e "${YELLOW}[-]${NC} Check /var/log/nvidia-installer.log for detailed error information"
         
-        # Provide fallback guidance
-        echo ""
-        echo -e "${BLUE}Fallback Options:${NC}"
-        echo -e "${YELLOW}1.${NC} Continue with v16.1 driver (functional for Tesla P4)"
-        echo -e "${YELLOW}2.${NC} Check kernel compatibility with: uname -r"
-        echo -e "${YELLOW}3.${NC} Ensure kernel headers are installed: apt install proxmox-headers-\$(uname -r | cut -d'-' -f1,2)"
-        echo -e "${YELLOW}4.${NC} Review kernel module compilation errors in nvidia-installer.log"
+        # Analyze the specific error from nvidia-installer.log
+        analyze_nvidia_installation_error
         
         return 1
     fi

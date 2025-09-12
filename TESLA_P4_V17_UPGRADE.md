@@ -63,6 +63,9 @@ Check Tesla P4 status and get guidance:
 ## Requirements
 
 - Tesla P4 GPU (device ID 1bb3)
+- **Kernel Compatibility:**
+  - v17.0 driver (550.54.10): Requires kernel 6.7.x or older
+  - For kernel 6.8+: Use v16.9 (535.230.02) instead
 - Proper kernel headers: `apt install proxmox-headers-$(uname -r | cut -d'-' -f1,2)`
 - Internet connection for driver downloads
 - megatools package (automatically installed)
@@ -70,8 +73,32 @@ Check Tesla P4 status and get guidance:
 ## Troubleshooting
 
 ### Kernel Module Compilation Errors
+
+#### iommu_ops API Compatibility Error
+If you see this error:
+```
+error: 'const struct bus_type' has no member named 'iommu_ops'
+```
+
+**Cause:** Kernel 6.8+ removed the `iommu_ops` member from `bus_type` struct, but NVIDIA v17.0 driver (550.54.10) expects the old API.
+
+**Solutions:**
+1. **Use compatible driver version (Recommended):**
+   - Install v16.9 (535.230.02) instead - fully compatible with newer kernels
+   - Run: `./proxmox-installer.sh` and select option 7
+
+2. **Use compatible kernel version:**
+   - Install kernel 6.5.x: `apt install proxmox-kernel-6.5`
+   - Reboot and select 6.5 kernel in GRUB menu
+   - Then install v17.0 driver
+
+3. **Continue with v16.1 base driver:**
+   - The v16.1 driver installed during the upgrade workflow should work
+   - Tesla P4 vGPU profiles will be available
+
+#### General Compilation Issues
 1. Ensure kernel headers are installed
-2. Check kernel version compatibility
+2. Check kernel version compatibility  
 3. Review nvidia-installer.log for specific errors
 4. Consider using v16.9 as alternative
 
