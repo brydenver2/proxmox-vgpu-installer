@@ -64,8 +64,9 @@ Check Tesla P4 status and get guidance:
 
 - Tesla P4 GPU (device ID 1bb3)
 - **Kernel Compatibility:**
-  - v17.0 driver (550.54.10): Requires kernel 6.7.x or older
-  - For kernel 6.8+: Use v16.9 (535.230.02) instead
+  - v17.0 driver (550.54.10): Requires kernel 6.7.x or older due to iommu_ops API changes
+  - v17.2+ drivers: Should work with kernel 6.8+ (improved API compatibility)
+  - For kernel 6.8+: Use v16.9 (535.230.02) or v17.2+ instead of v17.0
 - Proper kernel headers: `apt install proxmox-headers-$(uname -r | cut -d'-' -f1,2)`
 - Internet connection for driver downloads
 - megatools package (automatically installed)
@@ -133,5 +134,17 @@ nvidia-224    GRID P4-4Q    (4GB VRAM, 1 instance)
 - **Enhanced error handling** with clear recovery options
 - **Automatic detection** requires no manual intervention
 - **Preserves functionality** even if upgrade fails
+
+## Manual Installation of Newer Drivers
+
+For drivers not yet in the installer menu (v17.2, v17.3, etc.):
+
+1. **Install driver manually** using NVIDIA's installer
+2. **Complete vGPU setup** using our manual installation guide
+3. **Apply Tesla P4 configuration** for proper profile detection
+
+See `MANUAL_DRIVER_INSTALLATION.md` for complete instructions on setting up vgpu_unlock-rs and Tesla P4 configuration after manual driver installation.
+
+**Note:** v17.2+ drivers typically have better kernel 6.8+ compatibility than v17.0, making manual installation viable for newer kernel systems.
 
 This workflow addresses the specific Tesla P4 issue mentioned in GitHub issue #22.

@@ -90,6 +90,12 @@ Tesla P4 cards automatically receive the correct vGPU profiles during installati
 - Provides enhanced error handling and fallback options
 - See `TESLA_P4_V17_UPGRADE.md` for detailed information
 
+### Manual Driver Installation
+For newer drivers not yet in the installer menu (v17.2, v17.3, etc.):
+- Complete setup guide available in `MANUAL_DRIVER_INSTALLATION.md`
+- Includes vgpu_unlock-rs installation and Tesla P4 configuration
+- Supports v17.2+ drivers with improved kernel 6.8+ compatibility
+
 ### Command Line Tools
 ```bash
 # Check Tesla P4 status and diagnose issues
