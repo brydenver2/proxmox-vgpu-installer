@@ -10,7 +10,7 @@ STEP="${STEP:-1}"
 URL="${URL:-}"
 FILE="${FILE:-}"
 DRIVER_VERSION="${DRIVER_VERSION:-}"
-SCRIPT_VERSION=1.2
+SCRIPT_VERSION=1.3
 VGPU_DIR="$(realpath "$(pwd)")"
 VGPU_SUPPORT="${VGPU_SUPPORT:-}"
 DRIVER_VERSION="${DRIVER_VERSION:-}"
@@ -89,6 +89,48 @@ test_nvidia_config_permissions() {
     
     echo -e "${GREEN}[+]${NC} Configuration file permissions test completed"
     return 0
+}
+
+# Function to detect Pascal GPUs (including Tesla P4 and other Pascal cards)
+detect_pascal_gpu() {
+    # Check if system has Pascal GPU (includes Tesla P4 and other Pascal cards)
+    local gpu_info=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
+    if [ -n "$gpu_info" ]; then
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Found NVIDIA GPU(s):${NC}"
+            echo "$gpu_info" | sed 's/^/  /'
+        fi
+        
+        local gpu_device_ids=$(echo "$gpu_info" | grep -oE '\[10de:[0-9a-fA-F]{2,4}\]' | cut -d ':' -f 2 | tr -d ']')
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] Extracted device IDs: $gpu_device_ids${NC}"
+        fi
+        
+        # Pascal architecture device IDs (common ones)
+        # Tesla P4: 1bb3, Tesla P40: 1b38, Tesla P100: 15f7, 15f8, 15f9
+        # GTX 10xx series: 1b80-1be1, Quadro P series: 1b30-1bb9
+        local pascal_ids="1bb3 1b38 15f7 15f8 15f9 1b80 1b81 1b82 1b83 1b84 1b87 1ba0 1ba1 1ba2 1bb0 1bb1 1bb4 1bb5 1bb6 1bb7 1bb8 1bb9 1bc7 1be0 1be1 1c02 1c03 1c04 1c06 1c07 1c09 1c20 1c21 1c22 1c23 1c30 1c31 1c35 1c60 1c61 1c62 1c70 1c81 1c82 1c8c 1c8d 1cb1 1cb2 1cb3 1cb6 1cba 1cbb 1cbc 1cbd 1cfa 1cfb"
+        
+        for device_id in $gpu_device_ids; do
+            for pascal_id in $pascal_ids; do
+                if [ "$device_id" = "$pascal_id" ]; then
+                    if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+                        echo -e "${GRAY}[DEBUG] Pascal GPU detected (device ID: $device_id)${NC}"
+                    fi
+                    return 0  # Pascal GPU found
+                fi
+            done
+        done
+        
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] No Pascal GPUs found${NC}"
+        fi
+    else
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] No NVIDIA GPUs found${NC}"
+        fi
+    fi
+    return 1  # Pascal GPU not found
 }
 
 # Function to detect Tesla P4 GPUs
@@ -480,9 +522,220 @@ apply_tesla_p4_fix() {
     fi
 }
 
+# Function to apply Pascal vGPU configuration fix following PoloLoco's guide
+apply_pascal_vgpu_fix() {
+    local driver_version="$1"
+    
+    # Check if we have Pascal GPU and are using v17.x driver
+    if detect_pascal_gpu; then
+        echo ""
+        echo -e "${YELLOW}[-]${NC} Pascal GPU detected with driver v$driver_version"
+        
+        # Check if we're using v17.x or newer driver
+        if [[ "$driver_version" =~ ^17\.|^18\. ]]; then
+            echo -e "${YELLOW}[-]${NC} Following PoloLoco's guide: Pascal cards with v17.x+ drivers need v16.4 vgpuConfig.xml"
+            echo -e "${YELLOW}[-]${NC} This is required because NVIDIA dropped Pascal support starting from v17.0"
+            
+            # Get the vgpuConfig.xml from driver 16.4
+            local config_path
+            config_path=$(download_tesla_p4_config)  # Reuse existing function as it gets v16.4 config
+            local download_result=$?
+            
+            if [ $download_result -eq 0 ] && [ -f "$config_path" ]; then
+                # Create nvidia vgpu directory if it doesn't exist
+                echo -e "${YELLOW}[-]${NC} Ensuring /usr/share/nvidia/vgpu directory exists"
+                if ! mkdir -p "/usr/share/nvidia/vgpu"; then
+                    echo -e "${RED}[!]${NC} Failed to create /usr/share/nvidia/vgpu directory"
+                    echo -e "${YELLOW}[-]${NC} This could be due to insufficient permissions (run as root)"
+                    return 1
+                fi
+                
+                # Backup existing config if it exists
+                if [ -f "/usr/share/nvidia/vgpu/vgpuConfig.xml" ]; then
+                    local backup_file="/usr/share/nvidia/vgpu/vgpuConfig.xml.backup.$(date +%Y%m%d_%H%M%S)"
+                    echo -e "${YELLOW}[-]${NC} Backing up existing vgpuConfig.xml to $backup_file"
+                    cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file" 2>/dev/null || true
+                fi
+                
+                # Copy v16.4 configuration for Pascal compatibility
+                echo -e "${GREEN}[+]${NC} Installing v16.4 vgpuConfig.xml for Pascal compatibility"
+                
+                if cp "$config_path" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
+                    echo -e "${GREEN}[+]${NC} File copied successfully"
+                    
+                    # Set proper permissions
+                    chmod 644 "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || true
+                    chown root:root "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || true
+                    
+                    # Verify the copied configuration contains Pascal data
+                    if grep -q "1BB3\|1bb3\|1B38\|1b38" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                        echo -e "${GREEN}[+]${NC} Pascal vGPU configuration applied successfully"
+                        echo -e "${GREEN}[+]${NC} Configuration contains Pascal device IDs"
+                    else
+                        echo -e "${YELLOW}[-]${NC} Warning: Configuration file may not contain Pascal specific data"
+                    fi
+                    
+                    # Clean up temporary files
+                    rm -rf "/tmp/tesla_p4_fix" 2>/dev/null || true
+                    
+                    echo -e "${GREEN}[+]${NC} Pascal vGPU configuration fix completed (PoloLoco guide)"
+                    echo -e "${YELLOW}[-]${NC} ${RED}REBOOT REQUIRED:${NC} System must be rebooted for changes to take effect"
+                    echo -e "${YELLOW}[-]${NC} After reboot, Pascal GPUs should show proper vGPU profiles"
+                    echo -e "${YELLOW}[-]${NC} Verify with: mdevctl types"
+                    
+                else
+                    echo -e "${RED}[!]${NC} Failed to copy v16.4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
+                    echo -e "${RED}[!]${NC} Pascal vGPU fix could not be applied"
+                    return 1
+                fi
+            else
+                echo -e "${RED}[!]${NC} Failed to download v16.4 configuration for Pascal compatibility"
+                echo -e "${YELLOW}[-]${NC} Manual fix instructions (following PoloLoco's guide):"
+                echo -e "${YELLOW}[-]${NC} 1. Install v$driver_version driver first using this installer"
+                echo -e "${YELLOW}[-]${NC} 2. Download NVIDIA driver 16.4: NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
+                echo -e "${YELLOW}[-]${NC} 3. Extract: ./NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run -x"
+                echo -e "${YELLOW}[-]${NC} 4. Copy config: cp NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm/vgpuConfig.xml /usr/share/nvidia/vgpu/"
+                echo -e "${YELLOW}[-]${NC} 5. Reboot system"
+                echo -e "${YELLOW}[-]${NC} 6. Verify: mdevctl types"
+                
+                return 1
+            fi
+        else
+            # Using v16.x driver with Pascal - should work normally
+            echo -e "${GREEN}[+]${NC} Using v$driver_version driver with Pascal GPU - should work normally"
+            echo -e "${YELLOW}[-]${NC} v16.x drivers have native Pascal support"
+        fi
+        
+        echo ""
+    else
+        if [ "$DEBUG" = "true" ] || [ "$VERBOSE" = "true" ]; then
+            echo -e "${GRAY}[DEBUG] No Pascal GPU detected, skipping Pascal fix${NC}"
+        fi
+    fi
+}
+
+# Function to prompt user for driver download URL
+prompt_for_driver_url() {
+    local driver_filename="$1"
+    local driver_version="$2"
+    
+    echo ""
+    echo -e "${YELLOW}[!]${NC} Driver Download Required"
+    echo -e "${YELLOW}[-]${NC} Driver file: $driver_filename"
+    echo -e "${YELLOW}[-]${NC} Driver version: $driver_version"
+    echo ""
+    echo -e "${BLUE}Please provide a download URL for the NVIDIA vGPU driver.${NC}"
+    echo ""
+    echo -e "${YELLOW}Official Sources:${NC}"
+    echo -e "• NVIDIA Licensing Portal: https://nvid.nvidia.com/dashboard/"
+    echo -e "• NVIDIA vGPU Software: https://www.nvidia.com/en-us/drivers/vgpu-software-driver/"
+    echo ""
+    echo -e "${YELLOW}Community Sources (use at your own discretion):${NC}"
+    echo -e "• PoloLoco vGPU Discord: https://discord.gg/5rQsSV3Byq"
+    echo -e "• vGPU Unlocking Community resources"
+    echo ""
+    echo -e "${RED}Note:${NC} This script no longer provides hardcoded download links."
+    echo -e "${RED}Note:${NC} You must obtain drivers from official or trusted sources."
+    echo ""
+    
+    local url=""
+    while [ -z "$url" ]; do
+        read -p "$(echo -e "${BLUE}[?]${NC} Enter download URL for $driver_filename: ")" url
+        if [ -z "$url" ]; then
+            echo -e "${RED}[!]${NC} URL cannot be empty. Please provide a valid download URL."
+        elif [[ ! "$url" =~ ^https?:// ]]; then
+            echo -e "${RED}[!]${NC} Please provide a valid HTTP/HTTPS URL."
+            url=""
+        fi
+    done
+    
+    echo ""
+    echo -e "${GREEN}[+]${NC} Using URL: $url"
+    echo "$url"
+}
+
+# Function to download driver from user-provided URL
+download_driver_from_url() {
+    local driver_filename="$1"
+    local driver_url="$2"
+    local expected_md5="$3"
+    
+    echo -e "${YELLOW}[-]${NC} Downloading $driver_filename from provided URL..."
+    
+    # Check if file already exists
+    if [ -e "$driver_filename" ]; then
+        mv "$driver_filename" "$driver_filename.bak"
+        echo -e "${YELLOW}[-]${NC} Moved existing $driver_filename to $driver_filename.bak"
+    fi
+    
+    # Try different download methods
+    local download_success=false
+    
+    # Try with wget first
+    if command -v wget >/dev/null 2>&1; then
+        echo -e "${YELLOW}[-]${NC} Attempting download with wget..."
+        if timeout 600 wget -q --tries=3 --timeout=60 "$driver_url" -O "$driver_filename" 2>/dev/null; then
+            if [ -f "$driver_filename" ] && [ -s "$driver_filename" ]; then
+                download_success=true
+                echo -e "${GREEN}[+]${NC} Successfully downloaded using wget"
+            fi
+        fi
+    fi
+    
+    # Try with curl if wget failed
+    if [ "$download_success" = false ] && command -v curl >/dev/null 2>&1; then
+        echo -e "${YELLOW}[-]${NC} Attempting download with curl..."
+        if timeout 600 curl -L --retry 3 --max-time 60 --silent "$driver_url" -o "$driver_filename" 2>/dev/null; then
+            if [ -f "$driver_filename" ] && [ -s "$driver_filename" ]; then
+                download_success=true
+                echo -e "${GREEN}[+]${NC} Successfully downloaded using curl"
+            fi
+        fi
+    fi
+    
+    # Try with megadl if it's a mega.nz URL and available
+    if [ "$download_success" = false ] && [[ "$driver_url" == *"mega.nz"* ]] && command -v megadl >/dev/null 2>&1; then
+        echo -e "${YELLOW}[-]${NC} Detected Mega.nz URL, attempting download with megadl..."
+        if timeout 300 megadl "$driver_url" 2>/dev/null; then
+            if [ -f "$driver_filename" ] && [ -s "$driver_filename" ]; then
+                download_success=true
+                echo -e "${GREEN}[+]${NC} Successfully downloaded using megadl"
+            fi
+        fi
+    fi
+    
+    if [ "$download_success" = false ]; then
+        echo -e "${RED}[!]${NC} Failed to download driver from provided URL"
+        echo -e "${YELLOW}[-]${NC} Please verify the URL is correct and accessible"
+        echo -e "${YELLOW}[-]${NC} For Mega.nz URLs, ensure megatools is installed: apt install megatools"
+        return 1
+    fi
+    
+    # Verify MD5 if provided
+    if [ -n "$expected_md5" ]; then
+        local downloaded_md5=$(md5sum "$driver_filename" 2>/dev/null | awk '{print $1}')
+        if [ "$downloaded_md5" != "$expected_md5" ]; then
+            echo -e "${YELLOW}[-]${NC} MD5 checksum mismatch for downloaded driver"
+            echo -e "${YELLOW}[-]${NC} Expected: $expected_md5"
+            echo -e "${YELLOW}[-]${NC} Got:      $downloaded_md5"
+            echo -e "${YELLOW}[-]${NC} The file may be corrupted or from a different source"
+            echo ""
+            read -p "$(echo -e "${BLUE}[?]${NC} Continue anyway? (y/n): ")" choice
+            if [ "$choice" != "y" ]; then
+                echo "Download cancelled due to checksum mismatch."
+                return 1
+            fi
+        else
+            echo -e "${GREEN}[+]${NC} MD5 checksum verified successfully"
+        fi
+    fi
+    
+    return 0
+}
+
 # Function to display usage information
 display_usage() {
-    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help] [--tesla-p4-status]"
+    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--tesla-p4-fix] [--tesla-p4-help] [--tesla-p4-status] [--create-overrides]"
     echo -e ""
     echo -e "Options:"
     echo -e "  --debug               Enable debug mode with verbose output"
@@ -493,6 +746,14 @@ display_usage() {
     echo -e "  --tesla-p4-fix        Run Tesla P4 vGPU configuration fix only"
     echo -e "  --tesla-p4-help       Show Tesla P4 troubleshooting guide"
     echo -e "  --tesla-p4-status     Check Tesla P4 vGPU profile status"
+    echo -e "  --create-overrides    Create vGPU overrides following PoloLoco's guide"
+    echo -e ""
+    echo -e "New Features (PoloLoco Guide Integration):"
+    echo -e "  • Removed hardcoded download links - users provide URLs"
+    echo -e "  • Updated to use PoloLoco's official vgpu-proxmox repository"
+    echo -e "  • Added vGPU override configuration functionality"
+    echo -e "  • Enhanced Pascal card support following PoloLoco's recommendations"
+    echo -e "  • Improved patch handling from official PoloLoco repository"
     echo -e ""
     exit 1
 }
@@ -611,6 +872,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         --tesla-p4-help)
             show_tesla_p4_troubleshooting
+            exit 0
+            ;;
+        --create-overrides)
+            # Run vGPU override creation
+            echo ""
+            echo -e "${BLUE}vGPU Override Configuration (PoloLoco Guide)${NC}"
+            echo -e "${BLUE}============================================${NC}"
+            echo ""
+            create_vgpu_overrides
             exit 0
             ;;
         *)
@@ -992,6 +1262,13 @@ echo -e "${BLUE}by wvthoog.nl${NC}"
 echo -e ""
 echo -e "Welcome to the Nvidia vGPU installer version $SCRIPT_VERSION for Proxmox"
 echo -e "This system is running Proxmox version ${version} with kernel ${kernel}"
+echo -e ""
+echo -e "${GREEN}New in v1.3 (PoloLoco Guide Integration):${NC}"
+echo -e "• Removed hardcoded download links - user-provided URLs required"
+echo -e "• Updated to use PoloLoco's official vgpu-proxmox repository"
+echo -e "• Added vGPU override configuration following PoloLoco's guide"
+echo -e "• Enhanced Pascal card support with v16.4 vgpuConfig.xml"
+echo -e "• Following official PoloLoco recommendations for driver sources"
 
 # Initialize logging and show diagnostics status
 if [ "$VERBOSE" = "true" ]; then
@@ -1013,6 +1290,174 @@ fi
 
 echo ""
 
+# Function to create vGPU overrides following PoloLoco's guide
+create_vgpu_overrides() {
+    echo ""
+    echo -e "${BLUE}vGPU Override Configuration${NC}"
+    echo -e "${BLUE}===========================${NC}"
+    echo ""
+    echo -e "${YELLOW}[-]${NC} This will help you create vGPU overrides following PoloLoco's guide"
+    echo -e "${YELLOW}[-]${NC} Overrides allow customizing vGPU profiles for better performance"
+    echo ""
+    
+    # Check if vgpu_unlock directory exists
+    if [ ! -d "/etc/vgpu_unlock" ]; then
+        echo -e "${GREEN}[+]${NC} Creating vGPU unlock configuration directory"
+        mkdir -p /etc/vgpu_unlock
+    fi
+    
+    local config_file="/etc/vgpu_unlock/profile_override.toml"
+    
+    # Ask if user wants to create/modify overrides
+    read -p "$(echo -e "${BLUE}[?]${NC} Do you want to create/modify vGPU profile overrides? (y/n): ")" create_overrides
+    if [ "$create_overrides" != "y" ]; then
+        echo -e "${YELLOW}[-]${NC} Skipping vGPU override configuration"
+        return 0
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Available vGPU profiles (run 'mdevctl types' after driver installation):"
+    echo -e "${YELLOW}[-]${NC} Common profiles include:"
+    echo -e "${YELLOW}[-]${NC} • nvidia-259 (GRID RTX6000-4Q) - 4GB"
+    echo -e "${YELLOW}[-]${NC} • nvidia-258 (GRID RTX6000-3Q) - 3GB" 
+    echo -e "${YELLOW}[-]${NC} • nvidia-257 (GRID RTX6000-2Q) - 2GB"
+    echo -e "${YELLOW}[-]${NC} • nvidia-256 (GRID RTX6000-1Q) - 1GB"
+    echo ""
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter vGPU profile to configure (e.g., nvidia-259): ")" profile_name
+    if [ -z "$profile_name" ]; then
+        echo -e "${RED}[!]${NC} Profile name cannot be empty"
+        return 1
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Display configuration options:"
+    read -p "$(echo -e "${BLUE}[?]${NC} Number of displays (default: 1): ")" num_displays
+    num_displays=${num_displays:-1}
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Display width (default: 1920): ")" display_width
+    display_width=${display_width:-1920}
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Display height (default: 1080): ")" display_height
+    display_height=${display_height:-1080}
+    
+    # Calculate max_pixels
+    local max_pixels=$((display_width * display_height))
+    
+    echo ""
+    echo -e "${YELLOW}[-]${NC} VRAM configuration options:"
+    echo -e "${YELLOW}[-]${NC} Common VRAM sizes:"
+    echo -e "${YELLOW}[-]${NC} 1) 512MB"
+    echo -e "${YELLOW}[-]${NC} 2) 1GB"
+    echo -e "${YELLOW}[-]${NC} 3) 2GB"
+    echo -e "${YELLOW}[-]${NC} 4) Custom"
+    echo ""
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Select VRAM size (1-4): ")" vram_choice
+    
+    local framebuffer=""
+    local framebuffer_reservation=""
+    
+    case $vram_choice in
+        1)
+            framebuffer="0x1A000000"
+            framebuffer_reservation="0x6000000"
+            echo -e "${GREEN}[+]${NC} Selected 512MB VRAM"
+            ;;
+        2)
+            framebuffer="0x38000000"
+            framebuffer_reservation="0x8000000"
+            echo -e "${GREEN}[+]${NC} Selected 1GB VRAM"
+            ;;
+        3)
+            framebuffer="0x78000000"
+            framebuffer_reservation="0x8000000"
+            echo -e "${GREEN}[+]${NC} Selected 2GB VRAM"
+            ;;
+        4)
+            echo ""
+            echo -e "${YELLOW}[-]${NC} For custom VRAM sizes, please refer to PoloLoco's guide"
+            echo -e "${YELLOW}[-]${NC} framebuffer + framebuffer_reservation = total VRAM in bytes"
+            read -p "$(echo -e "${BLUE}[?]${NC} Enter framebuffer value (hex, e.g., 0x78000000): ")" framebuffer
+            read -p "$(echo -e "${BLUE}[?]${NC} Enter framebuffer_reservation value (hex, e.g., 0x8000000): ")" framebuffer_reservation
+            ;;
+        *)
+            echo -e "${YELLOW}[-]${NC} Invalid choice, using 1GB default"
+            framebuffer="0x38000000"
+            framebuffer_reservation="0x8000000"
+            ;;
+    esac
+    
+    # Ask about VM-specific overrides
+    echo ""
+    read -p "$(echo -e "${BLUE}[?]${NC} Do you want to create VM-specific overrides? (y/n): ")" vm_specific
+    local vm_id=""
+    if [ "$vm_specific" = "y" ]; then
+        read -p "$(echo -e "${BLUE}[?]${NC} Enter Proxmox VM ID (e.g., 100): ")" vm_id
+    fi
+    
+    # Create or append to configuration file
+    echo ""
+    echo -e "${GREEN}[+]${NC} Creating vGPU override configuration..."
+    
+    # Backup existing config if it exists
+    if [ -f "$config_file" ]; then
+        local backup_file="${config_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$config_file" "$backup_file"
+        echo -e "${YELLOW}[-]${NC} Backed up existing config to $backup_file"
+    fi
+    
+    # Create the configuration
+    {
+        echo "# vGPU Override Configuration"
+        echo "# Generated by Proxmox vGPU Installer following PoloLoco's guide"
+        echo "# $(date)"
+        echo ""
+        echo "[profile.${profile_name}]"
+        echo "num_displays = $num_displays"
+        echo "display_width = $display_width"
+        echo "display_height = $display_height"
+        echo "max_pixels = $max_pixels"
+        
+        if [ -n "$framebuffer" ] && [ -n "$framebuffer_reservation" ]; then
+            echo "framebuffer = $framebuffer"
+            echo "framebuffer_reservation = $framebuffer_reservation"
+        fi
+        
+        if [ -n "$vm_id" ]; then
+            echo ""
+            echo "[vm.$vm_id]"
+            echo "# VM-specific overrides for VM ID $vm_id"
+            echo "# You can add specific overrides here that only apply to this VM"
+            echo "# For example: frl_enabled = 0"
+        fi
+        
+        echo ""
+        echo "# For more configuration options, see:"
+        echo "# https://gitlab.com/polloloco/vgpu-proxmox"
+        echo "# https://github.com/mbilker/vgpu_unlock-rs"
+        
+    } > "$config_file"
+    
+    echo -e "${GREEN}[+]${NC} vGPU override configuration created: $config_file"
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Configuration summary:"
+    echo -e "${YELLOW}[-]${NC} • Profile: $profile_name"
+    echo -e "${YELLOW}[-]${NC} • Displays: $num_displays"
+    echo -e "${YELLOW}[-]${NC} • Resolution: ${display_width}x${display_height}"
+    echo -e "${YELLOW}[-]${NC} • Max pixels: $max_pixels"
+    if [ -n "$framebuffer" ]; then
+        echo -e "${YELLOW}[-]${NC} • Framebuffer: $framebuffer"
+        echo -e "${YELLOW}[-]${NC} • Framebuffer reservation: $framebuffer_reservation"
+    fi
+    if [ -n "$vm_id" ]; then
+        echo -e "${YELLOW}[-]${NC} • VM-specific config for VM ID: $vm_id"
+    fi
+    echo ""
+    echo -e "${GREEN}[+]${NC} vGPU overrides will take effect after driver installation and reboot"
+    echo ""
+}
+
 # Main installation process
 case $STEP in
     1)
@@ -1023,7 +1468,8 @@ case $STEP in
     echo "3) Remove vGPU installation"
     echo "4) Download vGPU drivers"
     echo "5) License vGPU"
-    echo "6) Exit"
+    echo "6) Create vGPU overrides (PoloLoco guide)"
+    echo "7) Exit"
     echo ""
     read -p "Enter your choice: " choice
 
@@ -1614,10 +2060,10 @@ case $STEP in
                     echo "Exiting  script."
                     exit 1
                 elif [ "$VGPU_SUPPORT" = "Yes" ]; then
-                    # Download vgpu-proxmox
+                    # Download vgpu-proxmox from PoloLoco's official repository
                     rm -rf $VGPU_DIR/vgpu-proxmox 2>/dev/null 
                     #echo "downloading vgpu-proxmox"
-                    run_command "Downloading vgpu-proxmox" "info" "git clone https://github.com/PTHyperdrive/vgpu-proxmox.git $VGPU_DIR/vgpu-proxmox"
+                    run_command "Downloading vgpu-proxmox from PoloLoco's official repository" "info" "git clone https://gitlab.com/polloloco/vgpu-proxmox.git $VGPU_DIR/vgpu-proxmox"
 
                     # Download vgpu_unlock-rs
                     cd /opt
@@ -1851,124 +2297,15 @@ case $STEP in
             # Todo: add bittorrent download option
        
             # Set the driver URL
-            case "$driver_version" in
-                18.1)
-                    driver_url="https://mega.nz/file/0YpHTAxJ#_XMpdJ68w3sM72p87kYSiEQXFA5BbFZl_xvF_XZSd4k"
-                    driver_custom="https://mega.nz/file/tNgBVTxb#MXSUN5E_yc3lXYhlhDb7LUzYdDpGAbqP1g1388iN55k"
-                    ;;
-                18.0)
-                    driver_url="https://mega.nz/file/RUxgjLRZ#aDy-DWKJXg-rTrisraE2MKrKbl1jbX4-13L0W32fiHQ"
-                    driver_custom="https://mega.nz/file/REhCHLhR#Enqhctae9n5-Db2g0aXhYPY4juhiHR-Cc0iP1nmXz9M"
-                    ;;
-                17.6)
-                    driver_url="https://mega.nz/file/NAYAGYpL#en-eYfid3GYmHkGVCAUagc6P2rbdw1Y2E9-7hOW19m8"
-                    driver_custom="none"
-                    ;;
-                17.5)
-                    driver_url="https://mega.nz/file/sYQ10b4b#hfGVeRog1pmNyx63N_I-siFENBWZj3w_ZQDsjW4PzW4"
-                    driver_custom="none"
-                    ;;
-                17.4)
-                    driver_url="https://mega.nz/file/VJIVTBiB#nFOU3zkoWyk4Dq1eW-y2dWUQ-YuvxVh_PYXT3bzdfYE"
-                    driver_custom="none"
-                    ;;
-                17.3)
-                    driver_url="https://mega.nz/file/1dYWAaDJ#9lGnw1CccnIcH7n7UAZ5nfGt3yUXcen72nOUiztw-RU"
-                    driver_custom="none"
-                    ;;
-                17.1)
-                    driver_url="https://mega.nz/file/sAYwDS7S#eyIeE_GYk_A0hwhayj3nOpcybLV_KAokJwXifDMQtPQ"
-                    driver_custom="none"
-                    ;;
-                17.0)
-                    driver_url="https://mega.nz/file/JjtyXRiC#cTIIvOIxu8vf-RdhaJMGZAwSgYmqcVEKNNnRRJTwDFI"
-                    driver_custom="none"
-                    ;;
-                16.9)
-                    driver_url="https://mega.nz/file/JFYDETBa#IqaXaoqrPAmSZSjbAXCWvHtiUxU0n9O7RJF8Xu5HXIo"
-                    driver_custom="none"
-                    ;;
-                16.8)
-                    driver_url="https://mega.nz/file/gJBGSZxK#cqyK3KCsfB0mYL8QCsV6P5C9ABmUcV7bQgE9DQ4_8O4"
-                    driver_custom="none"
-                    ;;
-                16.7)
-                    driver_url="https://mega.nz/file/gIwxGSyJ#xDcaxkymYcNFUTzwZ_m1HWcTgQrMSofJLPYMU-YGLMo"
-                    driver_custom="none"
-                    ;;
-                16.5)
-                    driver_url="https://mega.nz/file/RvsyyBaB#7fe_caaJkBHYC6rgFKtiZdZKkAvp7GNjCSa8ufzkG20"
-                    driver_custom="none"
-                    ;;
-                16.4)
-                    driver_url="https://mega.nz/file/RvsyyBaB#7fe_caaJkBHYC6rgFKtiZdZKkAvp7GNjCSa8ufzkG20"
-                    driver_custom="none"
-                    ;;
-                16.2)
-                    driver_url="https://mega.nz/file/EyEXTbbY#J9FUQL1Mo4ZpNyDijStEH4bWn3AKwnSAgJEZcxUnOiQ"
-                    driver_custom="none"
-                    ;;
-                16.1)
-                    driver_url="https://mega.nz/file/wy1WVCaZ#Yq2Pz_UOfydHy8nC_X_nloR4NIFC1iZFHqJN0EiAicU"
-                    driver_custom="none"
-                    ;;
-                16.0)
-                    driver_url="https://mega.nz/file/xrNCCAaT#UuUjqRap6urvX4KA1m8-wMTCW5ZwuWKUj6zAB4-NPSo"
-                    driver_custom="none"
-                    ;;
-            esac
-
             echo -e "${YELLOW}[-]${NC} Driver version: $driver_filename"
 
-            # Check if $driver_filename exists
-            if [ -e "$driver_filename" ]; then
-                mv "$driver_filename" "$driver_filename.bak"
-                echo -e "${YELLOW}[-]${NC} Moved $driver_filename to $driver_filename.bak"
-            fi
-                  
-            # Download and install the selected vGPU driver version
-            echo -e "${GREEN}[+]${NC} Downloading vGPU $driver_filename host driver using megadl"
+            # Prompt user for download URL instead of using hardcoded links
+            driver_url=$(prompt_for_driver_url "$driver_filename" "$driver_version")
             
-            # Check if megadl is available
-            if ! command -v megadl >/dev/null 2>&1; then
-                echo -e "${RED}[!]${NC} megadl (megatools) not found. Installing megatools..."
-                apt update && apt install -y megatools
-                if ! command -v megadl >/dev/null 2>&1; then
-                    echo -e "${RED}[!]${NC} Failed to install megatools. Please install manually: apt install megatools"
-                    exit 1
-                fi
-            fi
-            
-            megadl "$driver_url"
-
-            # Download and install the selected vGPU custom driver
-            if [ "$driver_custom" = "none" ]; then
-                echo "${YELLOW}[-]${NC}No available custom found for $driver_filename"
-                echo "${YELLOW}[-]${NC}Continue Installing Driver"
-            else
-                echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
-                megadl "$driver_custom"
-            fi
-            
-            # Check if download is successful
-            if [ $? -ne 0 ]; then
-                echo "Download failed."
+            # Download driver from user-provided URL
+            if ! download_driver_from_url "$driver_filename" "$driver_url" "$md5"; then
+                echo -e "${RED}[!]${NC} Failed to download driver. Exiting."
                 exit 1
-            fi
-
-            # Check MD5 hash of the downloaded file
-            downloaded_md5=$(md5sum "$driver_filename" | awk '{print $1}')
-            if [ "$downloaded_md5" != "$md5" ]; then
-                echo -e "${RED}[!]${NC} MD5 checksum mismatch. Downloaded file is corrupt."
-                echo ""
-                read -p "$(echo -e "${BLUE}[?]${NC} Do you want to continue? (y/n): ")" choice
-                echo ""
-                if [ "$choice" != "y" ]; then
-                    echo "Exiting script."
-                    exit 1
-                fi
-            else
-                echo -e "${GREEN}[+]${NC} MD5 checksum matched. Downloaded file is valid."
             fi
 
             exit 0
@@ -1982,14 +2319,23 @@ case $STEP in
             
             exit 0
             ;;
-        6)
+        6)  
+            echo ""
+            echo "This will help you create vGPU overrides following PoloLoco's guide"         
+            echo ""
+            
+            create_vgpu_overrides
+            
+            exit 0
+            ;;
+        7)
             echo ""
             echo "Exiting script."
             exit 0
             ;;
         *)
             echo ""
-            echo "Invalid choice. Please enter 1, 2, 3, 4, 5 or 6."
+            echo "Invalid choice. Please enter 1, 2, 3, 4, 5, 6 or 7."
             echo ""
             ;;
         esac
@@ -2250,123 +2596,21 @@ case $STEP in
             
             # Set the driver URL if not provided
             if [ -z "$URL" ]; then
-                case "$driver_version" in
-                    18.1)
-                        driver_url="https://mega.nz/file/0YpHTAxJ#_XMpdJ68w3sM72p87kYSiEQXFA5BbFZl_xvF_XZSd4k"
-                        driver_custom="https://mega.nz/file/tNgBVTxb#MXSUN5E_yc3lXYhlhDb7LUzYdDpGAbqP1g1388iN55k"
-                        ;;
-                    18.0)
-                        driver_url="https://mega.nz/file/RUxgjLRZ#aDy-DWKJXg-rTrisraE2MKrKbl1jbX4-13L0W32fiHQ"
-                        driver_custom="https://mega.nz/file/REhCHLhR#Enqhctae9n5-Db2g0aXhYPY4juhiHR-Cc0iP1nmXz9M"
-                        ;;
-                    17.6)
-                        driver_url="https://mega.nz/file/NAYAGYpL#en-eYfid3GYmHkGVCAUagc6P2rbdw1Y2E9-7hOW19m8"
-                        driver_custom="none"
-                        ;;
-                    17.5)
-                        driver_url="https://mega.nz/file/sYQ10b4b#hfGVeRog1pmNyx63N_I-siFENBWZj3w_ZQDsjW4PzW4"
-                        driver_custom="none"
-                        ;;
-                    17.4)
-                        driver_url="https://mega.nz/file/VJIVTBiB#nFOU3zkoWyk4Dq1eW-y2dWUQ-YuvxVh_PYXT3bzdfYE"
-                        driver_custom="none"
-                        ;;
-                    17.3)
-                        driver_url="https://mega.nz/file/1dYWAaDJ#9lGnw1CccnIcH7n7UAZ5nfGt3yUXcen72nOUiztw-RU"
-                        driver_custom="none"
-                        ;;
-                    17.1)
-                        driver_url="https://mega.nz/file/sAYwDS7S#eyIeE_GYk_A0hwhayj3nOpcybLV_KAokJwXifDMQtPQ"
-                        driver_custom="none"
-                        ;;
-                    17.0)
-                        driver_url="https://mega.nz/file/JjtyXRiC#cTIIvOIxu8vf-RdhaJMGZAwSgYmqcVEKNNnRRJTwDFI"
-                        driver_custom="none"
-                        ;;
-                    16.9)
-                        driver_url="https://mega.nz/file/JFYDETBa#IqaXaoqrPAmSZSjbAXCWvHtiUxU0n9O7RJF8Xu5HXIo"
-                        driver_custom="none"
-                        ;;
-                    16.8)
-                        driver_url="https://mega.nz/file/gJBGSZxK#cqyK3KCsfB0mYL8QCsV6P5C9ABmUcV7bQgE9DQ4_8O4"
-                        driver_custom="none"
-                        ;;
-                    16.7)
-                        driver_url="https://mega.nz/file/gIwxGSyJ#xDcaxkymYcNFUTzwZ_m1HWcTgQrMSofJLPYMU-YGLMo"
-                        driver_custom="none"
-                        ;;
-                    16.5)
-                        driver_url="https://mega.nz/file/RvsyyBaB#7fe_caaJkBHYC6rgFKtiZdZKkAvp7GNjCSa8ufzkG20"
-                        driver_custom="none"
-                        ;;
-                    16.4)
-                        driver_url="https://mega.nz/file/RvsyyBaB#7fe_caaJkBHYC6rgFKtiZdZKkAvp7GNjCSa8ufzkG20"
-                        driver_custom="none"
-                        ;;
-                    16.2)
-                        driver_url="https://mega.nz/file/EyEXTbbY#J9FUQL1Mo4ZpNyDijStEH4bWn3AKwnSAgJEZcxUnOiQ"
-                        driver_custom="none"
-                        ;;
-                    16.1)
-                        driver_url="https://mega.nz/file/wy1WVCaZ#Yq2Pz_UOfydHy8nC_X_nloR4NIFC1iZFHqJN0EiAicU"
-                        driver_custom="none"
-                        ;;
-                    16.0)
-                        driver_url="https://mega.nz/file/xrNCCAaT#UuUjqRap6urvX4KA1m8-wMTCW5ZwuWKUj6zAB4-NPSo"
-                        driver_custom="none"
-                        ;;
-                esac
+                # Note: Hardcoded URLs have been removed per PoloLoco guide requirements
+                # Users must provide their own download URLs from official or trusted sources
+                echo -e "${YELLOW}[-]${NC} Following PoloLoco vGPU guide recommendations for driver sources"
+                echo -e "${YELLOW}[-]${NC} Driver URLs must be provided by user from official sources"
             fi
 
             echo -e "${YELLOW}[-]${NC} Driver version: $driver_filename"
 
-            # Check if $driver_filename exists
-            if [ -e "$driver_filename" ]; then
-                mv "$driver_filename" "$driver_filename.bak"
-                echo -e "${YELLOW}[-]${NC} Moved $driver_filename to $driver_filename.bak"
-            fi
-                
-            # Download and install the selected vGPU driver version
-            echo -e "${GREEN}[+]${NC} Downloading vGPU $driver_filename host driver using megadl"
+            # Prompt user for download URL instead of using hardcoded links
+            driver_url=$(prompt_for_driver_url "$driver_filename" "$driver_version")
             
-            # Check if megadl is available
-            if ! command -v megadl >/dev/null 2>&1; then
-                echo -e "${RED}[!]${NC} megadl (megatools) not found. Installing megatools..."
-                apt update && apt install -y megatools
-                if ! command -v megadl >/dev/null 2>&1; then
-                    echo -e "${RED}[!]${NC} Failed to install megatools. Please install manually: apt install megatools"
-                    exit 1
-                fi
-            fi
-            
-            megadl "$driver_url"
-            
-            if [ "$driver_custom" = "none" ]; then
-                echo "${YELLOW}[-]${NC}No available custom found for $driver_filename"
-                echo "${YELLOW}[-]${NC}Continue Installing Driver"
-            else
-                echo -e "${GREEN}[+]${NC} Downloading vGPU custom $driver_filename host driver using megadl"
-                megadl "$driver_custom"
-            fi
-            # Check if download is successful
-            if [ $? -ne 0 ]; then
-                echo -e "${RED}[!]${NC} Download failed."
+            # Download driver from user-provided URL
+            if ! download_driver_from_url "$driver_filename" "$driver_url" "$md5"; then
+                echo -e "${RED}[!]${NC} Failed to download driver. Exiting."
                 exit 1
-            fi
-
-            # Check MD5 hash of the downloaded file
-            downloaded_md5=$(md5sum "$driver_filename" | awk '{print $1}')
-            if [ "$downloaded_md5" != "$md5" ]; then
-                echo -e "${RED}[!]${NC}  MD5 checksum mismatch. Downloaded file is corrupt."
-                echo ""
-                read -p "$(echo -e "${BLUE}[?]${NC}Do you want to continue? (y/n): ")" choice
-                echo ""
-                if [ "$choice" != "y" ]; then
-                    echo "Exiting script."
-                    exit 1
-                fi
-            else
-                echo -e "${GREEN}[+]${NC} MD5 checksum matched. Downloaded file is valid."
             fi
         fi
 
@@ -2577,6 +2821,9 @@ case $STEP in
 
         # Apply Tesla P4 vGPU configuration fix if needed
         apply_tesla_p4_fix
+
+        # Apply Pascal vGPU configuration fix following PoloLoco's guide
+        apply_pascal_vgpu_fix "$driver_version"
 
         # Check DRIVER_VERSION against specific driver filenames
         if [ "$driver_filename" == "NVIDIA-Linux-x86_64-570.133.10-vgpu-kvm.run" ]; then
