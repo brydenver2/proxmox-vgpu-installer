@@ -43,6 +43,42 @@ The script automatically:
 4. Uses `proxmox-boot-tool kernel pin` only when required
 
 For more information, see the [NVIDIA vGPU documentation](https://docs.nvidia.com/grid/) and kernel compatibility matrices.
+Changes in version 1.3 (PoloLoco Guide Integration)
+### Significant Updates Following PoloLoco's vGPU Guide
+	**Repository Integration**: Updated to use PoloLoco's official vgpu-proxmox repository (https://gitlab.com/polloloco/vgpu-proxmox.git)
+	**Download System Overhaul**: Removed hardcoded mega.nz download links - users must now provide driver URLs from official sources
+	**vGPU Override Configuration**: Added comprehensive vGPU override creation following PoloLoco's guide
+	**Enhanced Pascal Support**: Improved Pascal card support with v16.4 vgpuConfig.xml for v17.x+ drivers
+	**User-Prompted Downloads**: New prompt system for driver URLs from NVIDIA Licensing Portal or trusted sources
+	**Command Line Options**: Added --create-overrides option for vGPU override configuration
+	**Menu Integration**: New menu option (6) for creating vGPU overrides
+	**PoloLoco Compliance**: All changes follow PoloLoco's official recommendations and best practices
+
+### Key Features Added
+- **vGPU Profile Overrides**: Configure custom display settings, VRAM allocation, and VM-specific overrides
+- **Pascal Card Detection**: Automatic detection of Pascal GPUs (Tesla P4, Tesla P40, GTX 10xx, Quadro P series)
+- **v16.4 vgpuConfig.xml Handling**: Automatic copying of v16.4 configuration for Pascal cards with v17.x+ drivers
+- **Official Source Compliance**: Encourages use of NVIDIA Licensing Portal and official sources
+- **Enhanced Help System**: Updated help messages and troubleshooting guides
+
+### Breaking Changes
+- **No More Hardcoded URLs**: Users must provide their own driver download URLs
+- **Repository Change**: Now uses PoloLoco's official repository instead of PTHyperdrive fork
+- **Interactive Prompts**: Driver downloads now require user interaction for URL input
+
+### Pascal GPU Support (Following PoloLoco's Guide)
+- **Automatic Detection**: Supports Tesla P4, Tesla P40, GTX 10xx series, and Quadro P series
+- **v17.x Compatibility**: Automatically applies v16.4 vgpuConfig.xml when using v17.x+ drivers with Pascal cards
+- **Tesla P4 Enhanced**: Improved Tesla P4 support with proper profile detection
+- **Community Guidelines**: Follows PoloLoco's recommendations for Pascal card usage
+
+### vGPU Override Features
+- **Profile Configuration**: Configure display settings (resolution, displays, max_pixels)
+- **VRAM Allocation**: Set custom framebuffer and framebuffer_reservation values
+- **VM-Specific Overrides**: Create per-VM configurations with Proxmox VM IDs
+- **Common Presets**: Quick setup for 512MB, 1GB, 2GB VRAM configurations
+- **TOML Configuration**: Creates proper /etc/vgpu_unlock/profile_override.toml files
+
 ## Changes
 Changes in version 1.2
 ### Added driver versions 16
@@ -77,6 +113,81 @@ Changes in version 1.2
 - Always write config.txt to script directory
 - Use Docker for hosting FastAPI-DLS (licensing) or using this docker [fastapi-dls](https://github.com/GreenDamTan/fastapi-dls_mirror) container on any host or capable server
 - Create Powershell (ps1) and Bash (sh) files to retrieve licenses from FastAPI-DLS
+
+## Usage (v1.3 PoloLoco Guide Integration)
+
+### Quick Start
+```bash
+# Run the installer with enhanced PoloLoco guide integration
+sudo ./proxmox-installer.sh
+
+# Create vGPU overrides following PoloLoco's guide
+sudo ./proxmox-installer.sh --create-overrides
+
+# Show enhanced help with PoloLoco integration info
+./proxmox-installer.sh --help
+```
+
+### Driver Download Process (New in v1.3)
+The script no longer provides hardcoded download links. You must obtain drivers from official sources:
+
+1. **NVIDIA Licensing Portal** (Recommended): https://nvid.nvidia.com/dashboard/
+2. **NVIDIA vGPU Software**: https://www.nvidia.com/en-us/drivers/vgpu-software-driver/
+3. **Community Sources**: PoloLoco vGPU Discord, trusted community resources
+
+When prompted, provide the download URL for your chosen driver version.
+
+### vGPU Override Configuration
+Following PoloLoco's guide, you can create custom vGPU configurations:
+
+```bash
+# Interactive override creation
+sudo ./proxmox-installer.sh --create-overrides
+
+# Or use menu option 6 during installation
+sudo ./proxmox-installer.sh
+# Select option 6: Create vGPU overrides (PoloLoco guide)
+```
+
+### Pascal Card Support (Enhanced)
+For Pascal cards (Tesla P4, Tesla P40, GTX 10xx, Quadro P series) with v17.x+ drivers:
+- The script automatically detects Pascal GPUs
+- Downloads and applies v16.4 vgpuConfig.xml for compatibility
+- Follows PoloLoco's recommendations for Pascal card usage
+- Provides proper troubleshooting guidance
+
+### Command Line Options (Updated)
+```bash
+./proxmox-installer.sh [OPTIONS]
+
+Options:
+  --debug               Enable debug mode with verbose output
+  --verbose             Enable verbose logging for diagnostics  
+  --step <number>       Jump to specific installation step
+  --url <url>           Use custom driver download URL
+  --file <file>         Use local driver file
+  --tesla-p4-fix        Run Tesla P4 vGPU configuration fix only
+  --tesla-p4-help       Show Tesla P4 troubleshooting guide
+  --tesla-p4-status     Check Tesla P4 vGPU profile status
+  --create-overrides    Create vGPU overrides following PoloLoco's guide
+```
+
+### Menu Options (Updated)
+1. New vGPU installation
+2. Upgrade vGPU installation  
+3. Remove vGPU installation
+4. Download vGPU drivers (now with user-provided URLs)
+5. License vGPU
+6. **Create vGPU overrides (PoloLoco guide)** ← New in v1.3
+7. Exit
+
+### PoloLoco Guide Compliance
+This script now fully follows PoloLoco's official vGPU guide:
+- Uses official PoloLoco vgpu-proxmox repository
+- Implements recommended Pascal card handling
+- Provides official source guidance for driver downloads
+- Supports vGPU override configuration as documented
+- Maintains compatibility with existing functionality
 
 ## Multi-GPU vGPU Configuration
 
