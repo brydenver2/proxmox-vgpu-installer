@@ -2224,6 +2224,23 @@ case $STEP in
             fi
         fi
 
+        # Special logic for Pascal GPU driver patching based on PoloLoco's guide
+        # Pascal GPUs with v16.x drivers (natively supported) don't require patching
+        # Pascal GPUs with v17.x+ drivers ALWAYS require patching regardless of native support
+        original_vgpu_support="$VGPU_SUPPORT"
+        if detect_pascal_gpu; then
+            if [[ "$driver_version" =~ ^17\.|^18\. ]]; then
+                echo -e "${YELLOW}[-]${NC} Pascal GPU with v$driver_version driver detected: Forcing driver patching per PoloLoco's guide"
+                echo -e "${YELLOW}[-]${NC} Pascal cards require patching for v17.x+ drivers due to dropped NVIDIA support"
+                VGPU_SUPPORT="Yes"  # Override to force patching
+                write_log "Pascal GPU + v$driver_version: Overriding VGPU_SUPPORT from '$original_vgpu_support' to 'Yes' for required patching"
+            elif [[ "$driver_version" =~ ^16\. ]]; then
+                echo -e "${YELLOW}[-]${NC} Pascal GPU with v$driver_version driver detected: Using native support status ($original_vgpu_support)"
+                echo -e "${YELLOW}[-]${NC} Pascal cards with v16.x drivers follow normal vGPU support rules"
+                write_log "Pascal GPU + v$driver_version: Keeping original VGPU_SUPPORT '$original_vgpu_support' for v16.x driver"
+            fi
+        fi
+
         # Patch and install the driver only if vGPU is not native
         if [ "$VGPU_SUPPORT" = "Yes" ]; then
             write_log "Installing vGPU driver with patching for non-native vGPU support"
@@ -2301,6 +2318,13 @@ case $STEP in
 
         echo -e "${GREEN}[+]${NC} Driver installed successfully."
         write_log "Driver installation completed successfully"
+        
+        # Restore original VGPU_SUPPORT value if it was overridden for Pascal GPU patching
+        if [ -n "$original_vgpu_support" ] && [ "$original_vgpu_support" != "$VGPU_SUPPORT" ]; then
+            echo -e "${YELLOW}[-]${NC} Restoring original vGPU support status: $original_vgpu_support"
+            write_log "Restoring VGPU_SUPPORT from '$VGPU_SUPPORT' back to original '$original_vgpu_support'"
+            VGPU_SUPPORT="$original_vgpu_support"
+        fi
         
         # Log post-installation system state
         log_system_info "kernel"
