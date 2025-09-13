@@ -145,13 +145,51 @@ detect_pascal_gpu() {
 
 
 
+# Function to display PSA for Pascal (and older) GPUs following PoloLoco's recommendations
+display_pascal_psa() {
+    echo ""
+    echo -e "${RED}========================================================================${NC}"
+    echo -e "${RED}                    PSA FOR PASCAL (AND OLDER) GPUs                   ${NC}"
+    echo -e "${RED}                    Like Tesla P4, P40, GTX 1080, etc.               ${NC}"
+    echo -e "${RED}========================================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}IMPORTANT RECOMMENDATIONS (Following PoloLoco's Guide):${NC}"
+    echo ""
+    echo -e "${GREEN}[RECOMMENDED]${NC} Use ${YELLOW}v16.9 (535.230.02)${NC} driver for Pascal cards:"
+    echo -e "  • v16.9 is the last driver with full Pascal support"
+    echo -e "  • Best compatibility and stability for Pascal architecture"
+    echo -e "  • Native vGPU support without complex workarounds"
+    echo -e "  • Recommended by PoloLoco and the vGPU community"
+    echo ""
+    echo -e "${YELLOW}[CAUTION]${NC} v17.x+ drivers (550.x, 570.x series):"
+    echo -e "  • NVIDIA dropped Pascal support starting from v17.0"
+    echo -e "  • Requires v16.4 vgpuConfig.xml workaround (complex setup)"
+    echo -e "  • May have reduced stability or compatibility issues"
+    echo -e "  • Only use if you specifically need v17.x+ features"
+    echo ""
+    echo -e "${RED}[NOT RECOMMENDED]${NC} v18.x drivers for Pascal cards:"
+    echo -e "  • No native Pascal support"
+    echo -e "  • Complex workarounds required"
+    echo -e "  • Potential stability and performance issues"
+    echo ""
+    echo -e "${BLUE}Pascal GPU Support Summary:${NC}"
+    echo -e "  • ${GREEN}✓ v16.x drivers${NC}: Native support (recommended: v16.9)"
+    echo -e "  • ${YELLOW}⚠ v17.x drivers${NC}: Requires v16.4 vgpuConfig.xml workaround"
+    echo -e "  • ${RED}✗ v18.x drivers${NC}: Not recommended for Pascal cards"
+    echo ""
+    echo -e "${RED}========================================================================${NC}"
+    echo ""
+}
+
 # Function to apply Pascal vGPU configuration fix following PoloLoco's guide
 apply_pascal_vgpu_fix() {
     local driver_version="$1"
     
     # Check if we have Pascal GPU and are using v17.x driver
     if detect_pascal_gpu; then
-        echo ""
+        # Display PSA for Pascal GPUs following PoloLoco's recommendations
+        display_pascal_psa
+        
         echo -e "${YELLOW}[-]${NC} Pascal GPU detected with driver v$driver_version"
         
         # Check if we're using v17.x or newer driver
@@ -252,8 +290,14 @@ apply_pascal_vgpu_fix() {
             fi
         else
             # Using v16.x driver with Pascal - should work normally
-            echo -e "${GREEN}[+]${NC} Using v$driver_version driver with Pascal GPU - should work normally"
+            echo -e "${GREEN}[+]${NC} Using v$driver_version driver with Pascal GPU - excellent choice!"
             echo -e "${YELLOW}[-]${NC} v16.x drivers have native Pascal support"
+            
+            # Special message for v16.9 (recommended for Pascal)
+            if [[ "$driver_version" =~ ^16\.9 ]]; then
+                echo -e "${GREEN}[+]${NC} ${YELLOW}v16.9 is the recommended driver for Pascal cards per PoloLoco's guide${NC}"
+                echo -e "${GREEN}[+]${NC} This provides the best compatibility and stability for Pascal architecture"
+            fi
         fi
         
         echo ""
@@ -1009,6 +1053,14 @@ create_vgpu_overrides() {
 # Main installation process
 case $STEP in
     1)
+    # Check for Pascal GPU early and display PSA following PoloLoco's recommendations
+    if detect_pascal_gpu; then
+        display_pascal_psa
+        echo -e "${BLUE}Press any key to continue to the menu...${NC}"
+        read -n 1 -s
+        echo ""
+    fi
+    
     echo "Select an option:"
     echo ""
     echo "1) New vGPU installation"
@@ -2399,10 +2451,30 @@ case $STEP in
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 570.133.10"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU18.1/NVIDIA-Linux-x86_64-570.133.20-grid.run"
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU18.1/572.83_grid_win10_win11_server2022_dch_64bit_international.exe"
+            # Strong warning for Pascal GPU with v18.x driver
+            if detect_pascal_gpu; then
+                echo ""
+                echo -e "${RED}[!!!] WARNING: PASCAL GPU WITH v18.x DRIVER [!!!]${NC}"
+                echo -e "${RED}[!]${NC} v18.x drivers are NOT RECOMMENDED for Pascal cards per PoloLoco's PSA"
+                echo -e "${RED}[!]${NC} Consider using v16.9 for optimal Pascal compatibility"
+                echo -e "${YELLOW}[-]${NC} v18.x requires complex workarounds and may have stability issues"
+                echo -e "${GREEN}[+]${NC} Pascal GPU detected: vGPU configuration will be applied following PoloLoco's guide"
+                echo ""
+            fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-570.124.03-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 570.124.03"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU18.0/NVIDIA-Linux-x86_64-570.124.06-grid.run"
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU18.0/572.60_grid_win10_win11_server2019_server2022_dch_64bit_international.exe"
+            # Strong warning for Pascal GPU with v18.x driver
+            if detect_pascal_gpu; then
+                echo ""
+                echo -e "${RED}[!!!] WARNING: PASCAL GPU WITH v18.x DRIVER [!!!]${NC}"
+                echo -e "${RED}[!]${NC} v18.x drivers are NOT RECOMMENDED for Pascal cards per PoloLoco's PSA"
+                echo -e "${RED}[!]${NC} Consider using v16.9 for optimal Pascal compatibility"
+                echo -e "${YELLOW}[-]${NC} v18.x requires complex workarounds and may have stability issues"
+                echo -e "${GREEN}[+]${NC} Pascal GPU detected: vGPU configuration will be applied following PoloLoco's guide"
+                echo ""
+            fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-550.163.02-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 550.163.02"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.6/NVIDIA-Linux-x86_64-550.163.01-grid.run"
@@ -2429,15 +2501,25 @@ case $STEP in
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.0/551.61_grid_win10_win11_server2022_dch_64bit_international.exe"
             # Check for Pascal GPU and inform about the fix
             if detect_pascal_gpu; then
+                echo ""
+                echo -e "${YELLOW}[!] PASCAL GPU WITH v17.x DRIVER DETECTED [!]${NC}"
+                echo -e "${YELLOW}[-]${NC} v17.x drivers require v16.4 vgpuConfig.xml workaround for Pascal cards"
+                echo -e "${YELLOW}[-]${NC} Consider using v16.9 for better Pascal compatibility (see PSA above)"
                 echo -e "${GREEN}[+]${NC} Pascal GPU detected: vGPU configuration has been applied following PoloLoco's guide"
+                echo ""
             fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 535.230.02"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.9/NVIDIA-Linux-x86_64-535.230.02-grid.run"
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.9/539.19_grid_win10_win11_server2019_server2022_dch_64bit_international.exe"
-            # Check for Pascal GPU and inform about the fix
+            # Check for Pascal GPU and inform about the excellent choice
             if detect_pascal_gpu; then
+                echo ""
+                echo -e "${GREEN}[+++] EXCELLENT CHOICE FOR PASCAL GPUS! [+++]${NC}"
+                echo -e "${GREEN}[+]${NC} v16.9 is the RECOMMENDED driver for Pascal cards per PoloLoco's PSA"
+                echo -e "${GREEN}[+]${NC} This driver provides optimal stability and compatibility for Pascal architecture"
                 echo -e "${GREEN}[+]${NC} Pascal GPU detected: vGPU configuration has been applied following PoloLoco's guide"
+                echo ""
             fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 535.216.01"
