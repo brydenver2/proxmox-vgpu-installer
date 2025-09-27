@@ -136,10 +136,57 @@ check_vgpu_config() {
     fi
 }
 
+# Function to check vgpu_unlock configuration for Tesla P4
+check_vgpu_unlock_config() {
+    echo ""
+    echo -e "${YELLOW}4. Checking vgpu_unlock configuration...${NC}"
+    
+    local config_file="/etc/vgpu_unlock/config.toml"
+    
+    if [ -f "$config_file" ]; then
+        echo -e "   ${GREEN}✓${NC} vgpu_unlock config.toml found"
+        
+        # Check if file contains unlock setting
+        if grep -q "unlock.*=" "$config_file" 2>/dev/null; then
+            local unlock_value=$(grep "unlock.*=" "$config_file" | head -1 | sed 's/.*unlock[[:space:]]*=[[:space:]]*//' | tr -d '"'"'" | tr -d ' ')
+            
+            if [ "$unlock_value" = "false" ]; then
+                echo -e "   ${GREEN}✓${NC} Tesla P4 configuration correct: unlock = false"
+            elif [ "$unlock_value" = "true" ]; then
+                echo -e "   ${YELLOW}!${NC} Configuration may need adjustment: unlock = true"
+                echo -e "   ${YELLOW}!${NC} Tesla P4 cards typically require unlock = false"
+                return 1
+            else
+                echo -e "   ${YELLOW}!${NC} Unknown unlock value: $unlock_value"
+                return 1
+            fi
+        else
+            echo -e "   ${YELLOW}!${NC} No unlock setting found in configuration"
+            echo -e "   ${YELLOW}!${NC} Tesla P4 cards require unlock = false"
+            return 1
+        fi
+        
+        # Check file permissions
+        local file_perms=$(ls -la "$config_file" 2>/dev/null | awk '{print $1}')
+        if [[ "$file_perms" == *"r--r--r--"* ]]; then
+            echo -e "   ${GREEN}✓${NC} Configuration file has correct permissions"
+        else
+            echo -e "   ${YELLOW}!${NC} Configuration file permissions: $file_perms"
+        fi
+        
+        return 0
+    else
+        echo -e "   ${RED}✗${NC} vgpu_unlock config.toml not found"
+        echo -e "   ${RED}✗${NC} Expected location: $config_file"
+        echo -e "   ${YELLOW}!${NC} Tesla P4 requires proper vgpu_unlock configuration"
+        return 1
+    fi
+}
+
 # Function to check vGPU profiles
 check_vgpu_profiles() {
     echo ""
-    echo -e "${YELLOW}4. Checking vGPU profiles...${NC}"
+    echo -e "${YELLOW}5. Checking vGPU profiles...${NC}"
     
     if ! command -v mdevctl >/dev/null 2>&1; then
         echo -e "   ${RED}✗${NC} mdevctl command not found"
@@ -188,7 +235,8 @@ provide_recommendations() {
     local hardware_ok=$1
     local services_ok=$2
     local config_ok=$3
-    local profiles_ok=$4
+    local unlock_config_ok=$4
+    local profiles_ok=$5
     
     echo ""
     echo -e "${BLUE}Recommendations:${NC}"
@@ -203,6 +251,14 @@ provide_recommendations() {
         echo -e "${YELLOW}•${NC} Start NVIDIA services:"
         echo "  systemctl start nvidia-vgpud.service"
         echo "  systemctl start nvidia-vgpu-mgr.service"
+        echo ""
+    fi
+    
+    if [ $unlock_config_ok -ne 0 ]; then
+        echo -e "${YELLOW}•${NC} Fix vgpu_unlock configuration for Tesla P4:"
+        echo "  Re-run installer to generate proper config.toml with unlock = false"
+        echo "  ./proxmox-installer.sh"
+        echo "  Alternatively, manually edit /etc/vgpu_unlock/config.toml"
         echo ""
     fi
     
@@ -234,9 +290,14 @@ provide_recommendations() {
         echo "  sleep 30"
         echo "  mdevctl types"
         echo ""
+        echo -e "${YELLOW}•${NC} Verify vgpu_unlock configuration for Tesla P4:"
+        echo "  Check that /etc/vgpu_unlock/config.toml contains 'unlock = false'"
+        echo "  Tesla P4 cards require unlock = false in the configuration"
+        echo "  If missing, run: ./proxmox-installer.sh to regenerate configuration"
+        echo ""
     fi
     
-    if [ $hardware_ok -eq 0 ] && [ $services_ok -eq 0 ] && [ $config_ok -eq 0 ] && [ $profiles_ok -eq 0 ]; then
+    if [ $hardware_ok -eq 0 ] && [ $services_ok -eq 0 ] && [ $config_ok -eq 0 ] && [ $unlock_config_ok -eq 0 ] && [ $profiles_ok -eq 0 ]; then
         echo -e "${GREEN}✓${NC} Tesla P4 is configured correctly!"
         echo -e "${GREEN}✓${NC} You can now create vGPUs using the P4 profiles"
     fi
@@ -253,10 +314,13 @@ main() {
     check_vgpu_config
     config_result=$?
     
+    check_vgpu_unlock_config
+    unlock_config_result=$?
+    
     check_vgpu_profiles
     profiles_result=$?
     
-    provide_recommendations $hardware_result $services_result $config_result $profiles_result
+    provide_recommendations $hardware_result $services_result $config_result $unlock_config_result $profiles_result
     
     echo ""
     echo -e "${BLUE}Validation completed.${NC}"

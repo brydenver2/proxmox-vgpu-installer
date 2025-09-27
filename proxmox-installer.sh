@@ -882,6 +882,64 @@ fi
 
 echo ""
 
+# Function to create vgpu_unlock configuration for Tesla P4 cards
+create_vgpu_unlock_config() {
+    local config_file="/etc/vgpu_unlock/config.toml"
+    local tesla_p4_detected=false
+    
+    # Check for Tesla P4 cards (device ID 1bb3)
+    if lspci -nn | grep -i 'NVIDIA Corporation' | grep -q '1bb3'; then
+        tesla_p4_detected=true
+        echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected - creating specialized config.toml"
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Creating vgpu_unlock configuration file"
+    
+    # Create the config.toml file
+    cat > "$config_file" << 'EOF'
+# vgpu_unlock-rs configuration file
+# See: https://github.com/mbilker/vgpu_unlock-rs
+
+[logging]
+level = "INFO"
+
+[general]
+# For Tesla P4 cards, unlock must be set to false
+# See: https://github.com/mbilker/vgpu_unlock-rs/issues/tesla-p4
+EOF
+
+    # Add Tesla P4 specific configuration
+    if [ "$tesla_p4_detected" = true ]; then
+        cat >> "$config_file" << 'EOF'
+# Tesla P4 requires unlock = false
+unlock = false
+
+# Tesla P4 specific settings
+[tesla_p4]
+# Tesla P4 can use almost any driver version but requires specific configuration
+# The driver must be patched on the host system
+driver_patching_required = true
+EOF
+        echo -e "${GREEN}[+]${NC} Tesla P4 specific configuration added (unlock = false)"
+    else
+        cat >> "$config_file" << 'EOF'
+unlock = true
+EOF
+        echo -e "${GREEN}[+]${NC} Standard vgpu_unlock configuration added (unlock = true)"
+    fi
+    
+    # Set proper permissions
+    chmod 644 "$config_file"
+    chown root:root "$config_file" 2>/dev/null || true
+    
+    echo -e "${GREEN}[+]${NC} vgpu_unlock configuration created: $config_file"
+    
+    if [ "$tesla_p4_detected" = true ]; then
+        echo -e "${YELLOW}[-]${NC} Tesla P4 detected: Driver must be patched on host system"
+        echo -e "${YELLOW}[-]${NC} Configuration set to unlock = false as required for P4 cards"
+    fi
+}
+
 # Function to create vGPU overrides following PoloLoco's guide
 create_vgpu_overrides() {
     echo ""
@@ -1627,22 +1685,32 @@ case $STEP in
                 vendor_id=$(cat /proc/cpuinfo | grep vendor_id | awk 'NR==1{print $3}')
 
                 if [ "$vendor_id" = "AuthenticAMD" ]; then
-                    echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}"
-                    # Check if the required options are already present in GRUB_CMDLINE_LINUX_DEFAULT
-                    if grep -q "amd_iommu=on iommu=pt" /etc/default/grub; then
-                        echo -e "${YELLOW}[-]${NC} AMD IOMMU options are already set in GRUB_CMDLINE_LINUX_DEFAULT"
+                    echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}${NC}"
+                    # Remove iommu=pt if present (can cause unexpected behavior)
+                    if grep -q "iommu=pt" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter (can cause unexpected behavior)"
+                        sed -i 's/ iommu=pt//g' /etc/default/grub
+                    fi
+                    # Check if the required AMD IOMMU option is already present
+                    if grep -q "amd_iommu=on" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} AMD IOMMU option already set in GRUB_CMDLINE_LINUX_DEFAULT"
                     else
-                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ amd_iommu=on iommu=pt"/' /etc/default/grub
-                        echo -e "${GREEN}[+]${NC} AMD IOMMU options added to GRUB_CMDLINE_LINUX_DEFAULT"
+                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ amd_iommu=on"/' /etc/default/grub
+                        echo -e "${GREEN}[+]${NC} AMD IOMMU option added to GRUB_CMDLINE_LINUX_DEFAULT"
                     fi
                 elif [ "$vendor_id" = "GenuineIntel" ]; then
                     echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}${NC}"
-                    # Check if the required options are already present in GRUB_CMDLINE_LINUX_DEFAULT
-                    if grep -q "intel_iommu=on iommu=pt" /etc/default/grub; then
-                        echo -e "${YELLOW}[-]${NC} Intel IOMMU options are already set in GRUB_CMDLINE_LINUX_DEFAULT"
+                    # Remove iommu=pt if present (can cause unexpected behavior)
+                    if grep -q "iommu=pt" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter (can cause unexpected behavior)"
+                        sed -i 's/ iommu=pt//g' /etc/default/grub
+                    fi
+                    # Check if the required Intel IOMMU option is already present
+                    if grep -q "intel_iommu=on" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} Intel IOMMU option already set in GRUB_CMDLINE_LINUX_DEFAULT"
                     else
-                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ intel_iommu=on iommu=pt"/' /etc/default/grub
-                        echo -e "${GREEN}[+]${NC} Intel IOMMU options added to GRUB_CMDLINE_LINUX_DEFAULT"
+                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ intel_iommu=on"/' /etc/default/grub
+                        echo -e "${GREEN}[+]${NC} Intel IOMMU option added to GRUB_CMDLINE_LINUX_DEFAULT"
                     fi
                 else
                     echo -e "${RED}[!]${NC} Unknown CPU architecture. Unable to configure GRUB"
@@ -1682,9 +1750,14 @@ case $STEP in
                     #echo "building vgpu_unlock-rs"
                     run_command "Building vgpu_unlock-rs" "info" "cargo build --release"
 
-                    # Creating vgpu directory and toml file
+                    # Creating vgpu directory and configuration files
                     echo -e "${GREEN}[+]${NC} Creating vGPU files and directories"
                     mkdir -p /etc/vgpu_unlock
+                    
+                    # Create vgpu_unlock configuration (Tesla P4 aware)
+                    create_vgpu_unlock_config
+                    
+                    # Create empty profile override file (can be customized later)
                     touch /etc/vgpu_unlock/profile_override.toml
 
                     # Creating systemd folders
