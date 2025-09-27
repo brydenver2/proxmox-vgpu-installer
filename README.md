@@ -69,8 +69,14 @@ Changes in version 1.3 (PoloLoco Guide Integration)
 ### Pascal GPU Support (Following PoloLoco's Guide)
 - **Automatic Detection**: Supports Tesla P4, Tesla P40, GTX 10xx series, and Quadro P series
 - **v17.x Compatibility**: Automatically applies v16.4 vgpuConfig.xml when using v17.x+ drivers with Pascal cards
-- **Tesla P4 Enhanced**: Improved Tesla P4 support with proper profile detection
+- **Tesla P4 Enhanced**: Comprehensive Tesla P4 support with specialized configuration
 - **Community Guidelines**: Follows PoloLoco's recommendations for Pascal card usage
+
+### Tesla P4 Specific Improvements
+- **vgpu_unlock Configuration**: Automatically creates config.toml with `unlock = false` for P4 cards
+- **IOMMU Optimization**: Removes problematic `iommu=pt` parameter for better P4 stability
+- **Profile Detection**: Enhanced validation script specifically for Tesla P4 profile verification
+- **Troubleshooting**: Comprehensive Tesla P4 troubleshooting guidance and validation tools
 
 ### vGPU Override Features
 - **Profile Configuration**: Configure display settings (resolution, displays, max_pixels)
