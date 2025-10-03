@@ -823,24 +823,124 @@ EOF
         mkdir -p $VGPU_DIR/licenses
 
         echo -e "${GREEN}[+]${NC} Generate FastAPI-DLS Windows/Linux executables"
+        
+        # Check if driver version is 18 or higher (requires gridd-unlock-patcher)
+        needs_gridd_patcher=false
+        if [[ "$driver_version" =~ ^18\.|^19\. ]]; then
+            needs_gridd_patcher=true
+            echo -e "${YELLOW}[!]${NC} Driver v$driver_version requires gridd-unlock-patcher for licensing"
+        fi
+        
         # Create .sh file for Linux
-        cat > "$VGPU_DIR/licenses/license_linux.sh" <<EOF
+        if [ "$needs_gridd_patcher" = true ]; then
+            cat > "$VGPU_DIR/licenses/license_linux.sh" <<'EOF'
+#!/bin/bash
+
+# For v18.x and v19.x drivers, gridd-unlock-patcher is required
+# Install gridd-unlock-patcher if not already installed
+if [ ! -f /usr/bin/gridd-unlock-patcher ]; then
+    echo "Installing gridd-unlock-patcher for v18+ driver support..."
+    
+    # Download and install gridd-unlock-patcher
+    PATCHER_URL="https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher/raw/branch/main/gridd-unlock-patcher.sh"
+    
+    # Try to download the patcher
+    if command -v wget >/dev/null 2>&1; then
+        wget -q -O /tmp/gridd-unlock-patcher.sh "$PATCHER_URL"
+    elif command -v curl >/dev/null 2>&1; then
+        curl -sL -o /tmp/gridd-unlock-patcher.sh "$PATCHER_URL"
+    else
+        echo "ERROR: Neither wget nor curl found. Please install one and try again."
+        exit 1
+    fi
+    
+    # Make it executable and move to /usr/bin
+    chmod +x /tmp/gridd-unlock-patcher.sh
+    mv /tmp/gridd-unlock-patcher.sh /usr/bin/gridd-unlock-patcher
+    
+    echo "gridd-unlock-patcher installed successfully"
+fi
+
+# Run gridd-unlock-patcher before obtaining license
+echo "Running gridd-unlock-patcher..."
+gridd-unlock-patcher
+
+# Obtain license token from FastAPI-DLS
+EOF
+            cat >> "$VGPU_DIR/licenses/license_linux.sh" <<EOF
+curl --insecure -L -X GET https://$hostname:$portnumber/-/client-token -o /etc/nvidia/ClientConfigToken/client_configuration_token_\$(date '+%d-%m-%Y-%H-%M-%S').tok
+service nvidia-gridd restart
+nvidia-smi -q | grep "License"
+EOF
+        else
+            cat > "$VGPU_DIR/licenses/license_linux.sh" <<EOF
 #!/bin/bash
 
 curl --insecure -L -X GET https://$hostname:$portnumber/-/client-token -o /etc/nvidia/ClientConfigToken/client_configuration_token_\$(date '+%d-%m-%Y-%H-%M-%S').tok
 service nvidia-gridd restart
 nvidia-smi -q | grep "License"
 EOF
+        fi
 
         # Create .ps1 file for Windows
-        cat > "$VGPU_DIR/licenses/license_windows.ps1" <<EOF
+        if [ "$needs_gridd_patcher" = true ]; then
+            cat > "$VGPU_DIR/licenses/license_windows.ps1" <<'EOF'
+# For v18.x and v19.x drivers, gridd-unlock-patcher is required
+# Check if gridd-unlock-patcher is installed
+$patcherPath = "C:\Program Files\gridd-unlock-patcher\gridd-unlock-patcher.exe"
+
+if (-Not (Test-Path $patcherPath)) {
+    Write-Host "Installing gridd-unlock-patcher for v18+ driver support..." -ForegroundColor Yellow
+    
+    # Create directory
+    New-Item -ItemType Directory -Force -Path "C:\Program Files\gridd-unlock-patcher" | Out-Null
+    
+    # Download gridd-unlock-patcher
+    $patcherUrl = "https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher/releases/latest/download/gridd-unlock-patcher.exe"
+    
+    try {
+        Invoke-WebRequest -Uri $patcherUrl -OutFile $patcherPath -UseBasicParsing
+        Write-Host "gridd-unlock-patcher installed successfully" -ForegroundColor Green
+    } catch {
+        Write-Host "ERROR: Failed to download gridd-unlock-patcher" -ForegroundColor Red
+        Write-Host "Please download manually from: https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher" -ForegroundColor Yellow
+        exit 1
+    }
+}
+
+# Run gridd-unlock-patcher before obtaining license
+Write-Host "Running gridd-unlock-patcher..." -ForegroundColor Yellow
+& $patcherPath
+
+# Obtain license token from FastAPI-DLS
+EOF
+            cat >> "$VGPU_DIR/licenses/license_windows.ps1" <<EOF
 curl.exe --insecure -L -X GET https://$hostname:$portnumber/-/client-token -o "C:\Program Files\NVIDIA Corporation\vGPU Licensing\ClientConfigToken\client_configuration_token_\$(Get-Date -f 'dd-MM-yy-hh-mm-ss').tok"
 Restart-Service NVDisplay.ContainerLocalSystem
 & 'nvidia-smi' -q  | Select-String "License"
 EOF
+        else
+            cat > "$VGPU_DIR/licenses/license_windows.ps1" <<EOF
+curl.exe --insecure -L -X GET https://$hostname:$portnumber/-/client-token -o "C:\Program Files\NVIDIA Corporation\vGPU Licensing\ClientConfigToken\client_configuration_token_\$(Get-Date -f 'dd-MM-yy-hh-mm-ss').tok"
+Restart-Service NVDisplay.ContainerLocalSystem
+& 'nvidia-smi' -q  | Select-String "License"
+EOF
+        fi
 
         echo -e "${GREEN}[+]${NC} license_windows.ps1 and license_linux.sh created and stored in: $VGPU_DIR/licenses"
         echo -e "${YELLOW}[-]${NC} Copy these files to your Windows or Linux VM's and execute"
+        
+        if [ "$needs_gridd_patcher" = true ]; then
+            echo ""
+            echo -e "${YELLOW}[!]${NC} IMPORTANT: v18+ Driver Requirements"
+            echo "  - The generated scripts include gridd-unlock-patcher installation and execution"
+            echo "  - gridd-unlock-patcher is REQUIRED for v18.x and v19.x drivers to work with FastAPI-DLS"
+            echo "  - The patcher will be automatically downloaded and installed when you run the license scripts"
+            echo "  - Linux: Script will install to /usr/bin/gridd-unlock-patcher"
+            echo "  - Windows: Script will install to C:\\Program Files\\gridd-unlock-patcher\\gridd-unlock-patcher.exe"
+            echo "  - For more information: https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher"
+        fi
+        
         echo ""
         echo "Exiting script."
         echo ""
