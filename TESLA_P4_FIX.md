@@ -12,32 +12,47 @@ Tesla P4 cards have an issue where `nvidia-vgpu-mgr.service` loads incorrect mde
 
 ## Solution
 
-The installer now automatically detects Tesla P4 cards and applies a simple configuration fix:
+The installer now automatically detects GPU type and applies appropriate configuration:
 
-1. **Detection**: Automatically detects Tesla P4 GPUs (device ID `1bb3`)
+1. **GPU Detection**: Automatically detects GPU type and determines vGPU support level
 2. **Network Check**: Verifies internet connectivity before attempting downloads
-3. **Primary Download**: Downloads NVIDIA driver 16.4 (535.161.05) with retry logic
+3. **Primary Download**: Downloads NVIDIA driver with retry logic
 4. **Local Check**: Checks for existing local driver files if download fails
 5. **Application**: Copies the correct configuration to `/usr/share/nvidia/vgpu/vgpuConfig.xml`
-6. **vgpu_unlock Configuration**: Creates `/etc/vgpu_unlock/config.toml` with `unlock = false` for P4 cards
-7. **IOMMU Configuration**: Removes problematic `iommu=pt` parameter from GRUB
+6. **vgpu_unlock Configuration**: Creates `/etc/vgpu_unlock/config.toml` with appropriate settings:
+   - `unlock = false` for native vGPU cards (Tesla V100, P100, M60, GRID cards, etc.)
+   - `unlock = false` for Tesla P4 (special case)
+   - `unlock = true` for consumer cards (GTX, RTX series)
+7. **IOMMU Configuration**: Prompts user to choose whether to include `iommu=pt` parameter
 8. **Reboot Required**: System must be rebooted for changes to take effect
 
-## Tesla P4 Specific Requirements
+## GPU-Specific Requirements
 
 ### vgpu_unlock Configuration
-Tesla P4 cards require specific vgpu_unlock-rs configuration:
+The installer automatically configures `/etc/vgpu_unlock/config.toml` based on GPU type:
 
-- **unlock = false**: Tesla P4 cards must have `unlock = false` in `/etc/vgpu_unlock/config.toml`
-- **Driver Patching**: The driver must be patched on the host system
-- **Automatic Configuration**: The installer automatically creates the correct config.toml
+#### Native vGPU Cards (unlock = false)
+Cards with native vGPU support don't need unlock and should use `unlock = false`:
+- **Tesla cards with native support**: Tesla V100, Tesla P100, Tesla M60, etc.
+- **GRID cards**: GRID A100, GRID K series, etc.
+- **Quadro RTX 6000/8000**: Native vGPU support
+- **Tesla P4**: Special case - marked as requiring unlock in database but needs `unlock = false`
+
+#### Consumer Cards (unlock = true)
+Consumer cards require vgpu_unlock and should use `unlock = true`:
+- **GeForce GTX series**: GTX 1050, 1060, 1070, 1080, 1080 Ti, 1650, 1660, etc.
+- **GeForce RTX series**: RTX 2060, 2070, 2080, 3060, 3070, 3080, 4090, etc.
+- **Quadro without native support**: Quadro P series, etc.
+
+The installer detects your GPU type and automatically sets the correct `unlock` value.
 
 ### IOMMU Configuration  
-Tesla P4 cards work better without the `iommu=pt` parameter:
+The installer now provides a choice for `iommu=pt` parameter:
 
-- **Removed iommu=pt**: The installer removes `iommu=pt` which can cause unexpected behavior
-- **Proper IOMMU**: Uses only `amd_iommu=on` or `intel_iommu=on` as appropriate
-- **Better Stability**: Eliminates potential IOMMU-related issues with P4 cards
+- **User Choice**: During installation, you'll be asked whether to include `iommu=pt`
+- **Without iommu=pt** (recommended): Better stability, especially for Tesla P4 and similar cards
+- **With iommu=pt**: May improve performance in some scenarios, but can cause unexpected behavior
+- **Proper IOMMU**: Always uses `amd_iommu=on` or `intel_iommu=on` as appropriate
 
 ## Enhanced Error Handling
 
@@ -241,16 +256,17 @@ systemctl status nvidia-vgpud.service
 # Verify configuration file exists
 ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml
 
-# Check vgpu_unlock configuration (Tesla P4 specific)
+# Check vgpu_unlock configuration
 ls -la /etc/vgpu_unlock/config.toml
 grep "unlock" /etc/vgpu_unlock/config.toml
 
-# Should show: unlock = false (for Tesla P4)
+# Should show: unlock = false (for native vGPU cards and Tesla P4)
+# Should show: unlock = true (for consumer cards like GTX/RTX)
 
 # Verify GRUB configuration
 grep "GRUB_CMDLINE_LINUX_DEFAULT" /etc/default/grub
 
-# Should NOT contain iommu=pt (removed for Tesla P4 compatibility)
+# May or may not contain iommu=pt depending on your choice during installation
 ```
 
 ### Comprehensive Validation
@@ -283,19 +299,24 @@ Use the validation script for complete verification:
 4. Look for error messages in installation log
 
 ### vgpu_unlock Configuration Issues
-If Tesla P4 is still showing P40 profiles, check vgpu_unlock configuration:
+If you're experiencing vGPU profile issues, check vgpu_unlock configuration:
 
 1. **Verify config.toml exists**: `ls -la /etc/vgpu_unlock/config.toml`
 2. **Check unlock setting**: `grep "unlock" /etc/vgpu_unlock/config.toml`
-   - Should show: `unlock = false` for Tesla P4 cards
+   - Should show: `unlock = false` for native vGPU cards and Tesla P4
+   - Should show: `unlock = true` for consumer cards (GTX, RTX)
 3. **Manual fix if needed**:
    ```bash
    # Edit the configuration file
    sudo nano /etc/vgpu_unlock/config.toml
    
-   # Ensure it contains:
+   # For native vGPU cards (Tesla V100, P100, M60, GRID, Tesla P4):
    [general]
    unlock = false
+   
+   # For consumer cards (GTX, RTX):
+   [general]
+   unlock = true
    ```
 4. **Regenerate configuration**: Run `./proxmox-installer.sh` to recreate config files
 5. **Restart services**: 
@@ -306,16 +327,28 @@ If Tesla P4 is still showing P40 profiles, check vgpu_unlock configuration:
    ```
 
 ### IOMMU Issues
-If experiencing unexpected behavior, check GRUB configuration:
+The installer now allows you to choose whether to include `iommu=pt`:
 
-1. **Check for problematic settings**: `grep "iommu=pt" /etc/default/grub`
-2. **Remove if present**:
+1. **During Installation**: You'll be prompted to choose whether to include `iommu=pt`
+2. **If you experience performance issues**: Try adding `iommu=pt`
+   ```bash
+   # Edit GRUB configuration
+   sudo nano /etc/default/grub
+   
+   # Add iommu=pt to GRUB_CMDLINE_LINUX_DEFAULT
+   # For AMD: GRUB_CMDLINE_LINUX_DEFAULT="quiet amd_iommu=on iommu=pt"
+   # For Intel: GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on iommu=pt"
+   
+   sudo update-grub
+   sudo reboot
+   ```
+3. **If you experience unexpected behavior**: Try removing `iommu=pt`
    ```bash
    sudo sed -i 's/ iommu=pt//g' /etc/default/grub
    sudo update-grub
+   sudo reboot
    ```
-3. **Verify correct IOMMU settings**: Should only have `amd_iommu=on` or `intel_iommu=on`
-4. **Reboot required**: Changes require system reboot to take effect
+4. **Recommended**: Start without `iommu=pt` for better stability, add it only if needed
 
 ### Manual Fix Application
 If the automatic fix fails, you can apply it manually:

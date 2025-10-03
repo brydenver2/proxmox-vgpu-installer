@@ -1269,15 +1269,35 @@ fi
 
 echo ""
 
-# Function to create vgpu_unlock configuration for Tesla P4 cards
+# Function to create vgpu_unlock configuration based on GPU type
 create_vgpu_unlock_config() {
     local config_file="/etc/vgpu_unlock/config.toml"
-    local tesla_p4_detected=false
+    local vgpu_support="${1:-Unknown}"  # Accept VGPU_SUPPORT as parameter, default to Unknown
+    local unlock_setting="true"         # Default to unlock = true
+    local is_native=false
     
-    # Check for Tesla P4 cards (device ID 1bb3)
+    # Check for Tesla P4 cards (device ID 1bb3) - special case
+    local tesla_p4_detected=false
     if lspci -nn | grep -i 'NVIDIA Corporation' | grep -q '1bb3'; then
         tesla_p4_detected=true
         echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected - creating specialized config.toml"
+    fi
+    
+    # Determine unlock setting based on GPU support type
+    # Native vGPU cards (Tesla with native support, GRID) should have unlock = false
+    # Consumer cards (GTX, RTX, Quadro without native support) should have unlock = true
+    if [ "$vgpu_support" = "Native" ]; then
+        unlock_setting="false"
+        is_native=true
+        echo -e "${GREEN}[+]${NC} Native vGPU GPU detected - setting unlock = false"
+    elif [ "$tesla_p4_detected" = true ]; then
+        # Tesla P4 is a special case - it's marked as "Yes" in DB but needs unlock = false
+        unlock_setting="false"
+        echo -e "${GREEN}[+]${NC} Tesla P4 requires unlock = false (special case)"
+    else
+        # Consumer cards and other cases use unlock = true
+        unlock_setting="true"
+        echo -e "${GREEN}[+]${NC} Consumer GPU detected - setting unlock = true"
     fi
     
     echo -e "${GREEN}[+]${NC} Creating vgpu_unlock configuration file"
@@ -1291,15 +1311,17 @@ create_vgpu_unlock_config() {
 level = "INFO"
 
 [general]
-# For Tesla P4 cards, unlock must be set to false
-# See: https://github.com/mbilker/vgpu_unlock-rs/issues/tesla-p4
+# For native vGPU cards (Tesla with native support, GRID), unlock must be set to false
+# For consumer cards (GTX, RTX, Quadro without native support), unlock must be set to true
+# See: https://github.com/mbilker/vgpu_unlock-rs
 EOF
 
-    # Add Tesla P4 specific configuration
+    # Add unlock setting
+    echo "unlock = $unlock_setting" >> "$config_file"
+    
+    # Add Tesla P4 specific configuration if detected
     if [ "$tesla_p4_detected" = true ]; then
         cat >> "$config_file" << 'EOF'
-# Tesla P4 requires unlock = false
-unlock = false
 
 # Tesla P4 specific settings
 [tesla_p4]
@@ -1308,11 +1330,10 @@ unlock = false
 driver_patching_required = true
 EOF
         echo -e "${GREEN}[+]${NC} Tesla P4 specific configuration added (unlock = false)"
+    elif [ "$is_native" = true ]; then
+        echo -e "${GREEN}[+]${NC} Native vGPU configuration added (unlock = false)"
     else
-        cat >> "$config_file" << 'EOF'
-unlock = true
-EOF
-        echo -e "${GREEN}[+]${NC} Standard vgpu_unlock configuration added (unlock = true)"
+        echo -e "${GREEN}[+]${NC} Consumer GPU configuration added (unlock = true)"
     fi
     
     # Set proper permissions
@@ -1324,6 +1345,8 @@ EOF
     if [ "$tesla_p4_detected" = true ]; then
         echo -e "${YELLOW}[-]${NC} Tesla P4 detected: Driver must be patched on host system"
         echo -e "${YELLOW}[-]${NC} Configuration set to unlock = false as required for P4 cards"
+    elif [ "$is_native" = true ]; then
+        echo -e "${YELLOW}[-]${NC} Native vGPU GPU: No unlock needed, using unlock = false"
     fi
 }
 
@@ -2072,13 +2095,42 @@ case $STEP in
                 echo -e "${GREEN}[+]${NC} Checking CPU architecture"
                 vendor_id=$(cat /proc/cpuinfo | grep vendor_id | awk 'NR==1{print $3}')
 
+                # Ask user about iommu=pt parameter
+                echo ""
+                echo -e "${BLUE}IOMMU Configuration${NC}"
+                echo -e "${BLUE}===================${NC}"
+                echo ""
+                echo -e "${YELLOW}[-]${NC} The 'iommu=pt' parameter can affect system behavior:"
+                echo -e "${YELLOW}[-]${NC} • Without iommu=pt: Better stability, recommended for most cases"
+                echo -e "${YELLOW}[-]${NC} • With iommu=pt: May improve performance in some scenarios"
+                echo -e "${YELLOW}[-]${NC} • Note: Can cause unexpected behavior with some hardware (e.g., Tesla P4)"
+                echo ""
+                echo -n -e "${YELLOW}[-]${NC} Do you want to include 'iommu=pt' in GRUB configuration? (y/n): "
+                read -r include_iommu_pt
+                echo ""
+
                 if [ "$vendor_id" = "AuthenticAMD" ]; then
                     echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}${NC}"
-                    # Remove iommu=pt if present (can cause unexpected behavior)
-                    if grep -q "iommu=pt" /etc/default/grub; then
-                        echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter (can cause unexpected behavior)"
-                        sed -i 's/ iommu=pt//g' /etc/default/grub
+                    
+                    # Handle iommu=pt based on user choice
+                    if [ "$include_iommu_pt" = "y" ] || [ "$include_iommu_pt" = "Y" ]; then
+                        # Add iommu=pt if not present
+                        if ! grep -q "iommu=pt" /etc/default/grub; then
+                            sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ iommu=pt"/' /etc/default/grub
+                            echo -e "${GREEN}[+]${NC} Added iommu=pt parameter to GRUB configuration"
+                        else
+                            echo -e "${YELLOW}[-]${NC} iommu=pt parameter already present in GRUB configuration"
+                        fi
+                    else
+                        # Remove iommu=pt if present
+                        if grep -q "iommu=pt" /etc/default/grub; then
+                            echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter from GRUB configuration"
+                            sed -i 's/ iommu=pt//g' /etc/default/grub
+                        else
+                            echo -e "${GREEN}[+]${NC} iommu=pt not present (recommended for stability)"
+                        fi
                     fi
+                    
                     # Check if the required AMD IOMMU option is already present
                     if grep -q "amd_iommu=on" /etc/default/grub; then
                         echo -e "${YELLOW}[-]${NC} AMD IOMMU option already set in GRUB_CMDLINE_LINUX_DEFAULT"
@@ -2088,11 +2140,26 @@ case $STEP in
                     fi
                 elif [ "$vendor_id" = "GenuineIntel" ]; then
                     echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}${NC}"
-                    # Remove iommu=pt if present (can cause unexpected behavior)
-                    if grep -q "iommu=pt" /etc/default/grub; then
-                        echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter (can cause unexpected behavior)"
-                        sed -i 's/ iommu=pt//g' /etc/default/grub
+                    
+                    # Handle iommu=pt based on user choice
+                    if [ "$include_iommu_pt" = "y" ] || [ "$include_iommu_pt" = "Y" ]; then
+                        # Add iommu=pt if not present
+                        if ! grep -q "iommu=pt" /etc/default/grub; then
+                            sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ iommu=pt"/' /etc/default/grub
+                            echo -e "${GREEN}[+]${NC} Added iommu=pt parameter to GRUB configuration"
+                        else
+                            echo -e "${YELLOW}[-]${NC} iommu=pt parameter already present in GRUB configuration"
+                        fi
+                    else
+                        # Remove iommu=pt if present
+                        if grep -q "iommu=pt" /etc/default/grub; then
+                            echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter from GRUB configuration"
+                            sed -i 's/ iommu=pt//g' /etc/default/grub
+                        else
+                            echo -e "${GREEN}[+]${NC} iommu=pt not present (recommended for stability)"
+                        fi
                     fi
+                    
                     # Check if the required Intel IOMMU option is already present
                     if grep -q "intel_iommu=on" /etc/default/grub; then
                         echo -e "${YELLOW}[-]${NC} Intel IOMMU option already set in GRUB_CMDLINE_LINUX_DEFAULT"
@@ -2142,8 +2209,8 @@ case $STEP in
                     echo -e "${GREEN}[+]${NC} Creating vGPU files and directories"
                     mkdir -p /etc/vgpu_unlock
                     
-                    # Create vgpu_unlock configuration (Tesla P4 aware)
-                    create_vgpu_unlock_config
+                    # Create vgpu_unlock configuration (GPU type aware)
+                    create_vgpu_unlock_config "$VGPU_SUPPORT"
                     
                     # Create empty profile override file (can be customized later)
                     touch /etc/vgpu_unlock/profile_override.toml
