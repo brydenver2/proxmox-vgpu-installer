@@ -14,6 +14,11 @@ For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-
   - Available patches: v16.0-v16.9, v17.0-v17.6, v18.0-v18.4, v19.0
   - No patches available: v16.10, v16.11, v19.1, v19.2 (as of October 2025)
   - Drivers without patches require natively supported GPUs
+- **Note**: As of October 2025, specific patch files available:
+  - v18.2 (570.148.06) – `570.148.06.patch`
+  - v18.3 (570.158.02) – `570.158.02.patch`
+  - v18.4 (570.172.07) – `570.172.07.patch`
+  - v19.0 (580.65.05) – `580.65.05.patch`
 
 ## Kernel Compatibility Requirements
 
@@ -37,16 +42,16 @@ For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-
 - **No kernel pinning required**: Script allows using latest available kernel
 
 ### v18.x Drivers (570.x series) - Latest Kernel Support
-- v18.x drivers (570.124.03 to 570.160.01) support latest kernels including 6.8+
+- v18.x drivers (570.124.03 to 570.172.07) support latest kernels including 6.8+
 - Most recent driver architecture with full modern kernel compatibility
 - **No kernel pinning required**: Script allows using latest available kernel
-- **Patch Availability**: Patches available for v18.2, v18.3, and v18.4 via polloloco/vgpu-proxmox
+- **Patch Availability**: Patches available for v18.2 (570.148.06), v18.3 (570.158.02), and v18.4 (570.172.07) via polloloco/vgpu-proxmox
 
 ### v19.x Drivers (580.x series) - Next Generation Support
-- v19.x drivers (580.10.01 and newer) support latest kernels including 6.8+
+- v19.x drivers (580.65.05 and newer) support latest kernels including 6.8+
 - Next generation driver architecture with enhanced features
 - **No kernel pinning required**: Script allows using latest available kernel
-- **Patch Availability**: Patch available for v19.0 via polloloco/vgpu-proxmox; v19.1 and v19.2 do not have patches available as of October 2025
+- **Patch Availability**: Patch available for v19.0 (580.65.05) via polloloco/vgpu-proxmox; v19.1 (580.82.02) and v19.2 (580.95.02) do not have patches available as of October 2025
 
 ### Technical Details
 The script automatically:
@@ -114,8 +119,8 @@ Changes in version 1.2
 	16.7
 	16.8
 	16.9 !!! USE THIS IF YOU ARE ON PASCAL OR OLDER !!!
-	16.10 (No patch available - as of October 2025)
-	16.11 (No patch available - as of October 2025)
+	16.10 (535.247.02) (No patch available - as of October 2025)
+	16.11 (535.261.04) (No patch available - as of October 2025)
 ### Added driver versions 17
 	17.0
 	17.1
@@ -126,13 +131,13 @@ Changes in version 1.2
 ### Added driver versions 18
 	18.0
 	18.1 (Only Native vGPU support)
-	18.2 (Patch available via polloloco/vgpu-proxmox)
-	18.3 (Patch available via polloloco/vgpu-proxmox)
-	18.4 (Patch available via polloloco/vgpu-proxmox)
+	18.2 (570.148.06) (Patch available via polloloco/vgpu-proxmox)
+	18.3 (570.158.02) (Patch available via polloloco/vgpu-proxmox)
+	18.4 (570.172.07) (Patch available via polloloco/vgpu-proxmox)
 ### Added driver versions 19
-	19.0 (Patch available via polloloco/vgpu-proxmox)
-	19.1 (No patch available - as of October 2025)
-	19.2 (No patch available - as of October 2025)
+	19.0 (580.65.05) (Patch available via polloloco/vgpu-proxmox)
+	19.1 (580.82.02) (No patch available - as of October 2025)
+	19.2 (580.95.02) (No patch available - as of October 2025)
 - Added checks for multiple GPU's
 - Added MD5 checksums on downloaded files
 - Created database to check for PCI ID's to determine if a GPU is natively supported
