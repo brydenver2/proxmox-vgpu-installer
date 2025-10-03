@@ -2,8 +2,13 @@
 This is a little Bash script that configures a Proxmox 7 or 8 server to use Nvidia vGPU's. 
 For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-vgpu-v3/
 
-## WARNING !!!
-- fastapi-dls is not working correctly with v18.x but working fine on v17.x, please consider this for extended use
+## FastAPI-DLS Licensing Information
+- **FastAPI-DLS Version 2.x** is backwards compatible to v17.x and supports **v18.x** and **v19.x** driver releases
+- For v18.x and v19.x drivers, [gridd-unlock-patcher](https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher) is required for proper licensing functionality
+- The installer uses the latest FastAPI-DLS v2.x Docker image from `collinwebdesigns/fastapi-dls:latest`
+- For more information, see the [FastAPI-DLS documentation](https://git.collinwebdesigns.de/oscar.krause/fastapi-dls)
+
+## Driver Information
 - 17.6 & 18.1 is download only and only for natively support vGPU, lookup on NVIDIA for supported GPU ([v18.x](https://docs.nvidia.com/vgpu/18.0/product-support-matrix/index.html) & [v17.x](https://docs.nvidia.com/vgpu/17.0/product-support-matrix/index.html))
 
 ## Kernel Compatibility Requirements
