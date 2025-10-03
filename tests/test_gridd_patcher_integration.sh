@@ -187,8 +187,50 @@ if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
 ((test_count++))
 echo ""
 
+# Test v19.1 driver (should include gridd-unlock-patcher)
+test_license_script_generation "19.1" "v19.1 driver (patcher required)"
+if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
+((test_count++))
+echo ""
+
+# Test v19.2 driver (should include gridd-unlock-patcher)
+test_license_script_generation "19.2" "v19.2 driver (patcher required)"
+if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
+((test_count++))
+echo ""
+
+# Test v18.2 driver (should include gridd-unlock-patcher)
+test_license_script_generation "18.2" "v18.2 driver (patcher required)"
+if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
+((test_count++))
+echo ""
+
+# Test v18.3 driver (should include gridd-unlock-patcher)
+test_license_script_generation "18.3" "v18.3 driver (patcher required)"
+if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
+((test_count++))
+echo ""
+
+# Test v18.4 driver (should include gridd-unlock-patcher)
+test_license_script_generation "18.4" "v18.4 driver (patcher required)"
+if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
+((test_count++))
+echo ""
+
 # Test v16.9 driver (should NOT include gridd-unlock-patcher)
 test_license_script_generation "16.9" "v16.9 driver (no patcher needed)"
+if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
+((test_count++))
+echo ""
+
+# Test v16.10 driver (should NOT include gridd-unlock-patcher)
+test_license_script_generation "16.10" "v16.10 driver (no patcher needed)"
+if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
+((test_count++))
+echo ""
+
+# Test v16.11 driver (should NOT include gridd-unlock-patcher)
+test_license_script_generation "16.11" "v16.11 driver (no patcher needed)"
 if [ $? -eq 0 ]; then ((pass_count++)); else ((fail_count++)); fi
 ((test_count++))
 echo ""
