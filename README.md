@@ -124,6 +124,10 @@ Changes in version 1.2
   - Proper licensing guidance for multi-GPU deployments
 - Only non-vGPU capable or explicitly excluded GPUs are configured for passthrough using UDEV rules
 - Always write config.txt to script directory
+- **FastAPI-DLS v2.x Support**: Updated to support v17.x, v18.x, and v19.x drivers
+  - v18.x and v19.x require [gridd-unlock-patcher](https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher)
+  - Backward compatible with v17.x (no additional requirements)
+  - See [FastAPI-DLS v2.x Integration Guide](docs/FASTAPI_DLS_V2.md) for details
 - Use Docker for hosting FastAPI-DLS (licensing) or using this docker [fastapi-dls](https://github.com/GreenDamTan/fastapi-dls_mirror) container on any host or capable server
 - Create Powershell (ps1) and Bash (sh) files to retrieve licenses from FastAPI-DLS
 
@@ -260,7 +264,8 @@ The installer now provides **NVIDIA vGPU 16.0 compliant multi-GPU support** with
 #### Licensing Compliance
 - Clear guidance on licensing requirements for multi-GPU deployments
 - Each vGPU-enabled GPU requires proper NVIDIA vGPU licensing
-- FastAPI-DLS configuration with multi-GPU considerations
+- FastAPI-DLS v2.x configuration with multi-GPU considerations
+- See [FastAPI-DLS v2.x Integration Guide](docs/FASTAPI_DLS_V2.md) for licensing details
 
 #### System Resource Validation
 - Warnings about power and cooling requirements for multi-GPU setups
