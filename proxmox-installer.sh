@@ -424,7 +424,7 @@ download_driver_from_url() {
 
 # Function to display usage information
 display_usage() {
-    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--create-overrides]"
+    echo -e "Usage: $0 [--debug] [--verbose] [--step <step_number>] [--url <url>] [--file <file>] [--create-overrides] [--configure-pascal-vm]"
     echo -e ""
     echo -e "Options:"
     echo -e "  --debug               Enable debug mode with verbose output"
@@ -433,12 +433,14 @@ display_usage() {
     echo -e "  --url <url>           Use custom driver download URL"
     echo -e "  --file <file>         Use local driver file"
     echo -e "  --create-overrides    Create vGPU overrides following PoloLoco's guide"
+    echo -e "  --configure-pascal-vm Configure Pascal card ROM spoofing for Proxmox VMs"
     echo -e ""
     echo -e "New Features (PoloLoco Guide Integration):"
     echo -e "  • Removed hardcoded download links - users provide URLs"
     echo -e "  • Updated to use PoloLoco's official vgpu-proxmox repository"
     echo -e "  • Added vGPU override configuration functionality"
     echo -e "  • Enhanced Pascal card support following PoloLoco's recommendations"
+    echo -e "  • Added Pascal VM ROM spoofing configuration for v17+ drivers"
     echo -e "  • Improved patch handling from official PoloLoco repository"
     echo -e ""
     exit 1
@@ -479,6 +481,15 @@ while [[ $# -gt 0 ]]; do
             echo -e "${BLUE}============================================${NC}"
             echo ""
             create_vgpu_overrides
+            exit 0
+            ;;
+        --configure-pascal-vm)
+            # Run Pascal VM configuration
+            echo ""
+            echo -e "${BLUE}Pascal VM Configuration (ROM Spoofing)${NC}"
+            echo -e "${BLUE}======================================${NC}"
+            echo ""
+            configure_pascal_vm
             exit 0
             ;;
         *)
@@ -843,6 +854,382 @@ EOF
     fi
 }
 
+# Function to configure Pascal VM with ROM spoofing
+configure_pascal_vm() {
+    echo ""
+    echo -e "${BLUE}Pascal VM Configuration (ROM Spoofing)${NC}"
+    echo -e "${BLUE}======================================${NC}"
+    echo ""
+    echo -e "${YELLOW}[-]${NC} This function helps configure Pascal cards for Proxmox VMs"
+    echo -e "${YELLOW}[-]${NC} Pascal cards with NVIDIA drivers v17+ require ROM spoofing to work properly"
+    echo -e "${YELLOW}[-]${NC} This adds V100 device IDs to trick guest drivers into installing"
+    echo ""
+    
+    # First, check if we have Pascal GPUs
+    if ! detect_pascal_gpu; then
+        echo -e "${YELLOW}[-]${NC} No Pascal GPUs detected in system"
+        echo -e "${YELLOW}[-]${NC} This feature is specifically for Pascal architecture cards:"
+        echo -e "${YELLOW}[-]${NC} • Tesla P4, Tesla P40"
+        echo -e "${YELLOW}[-]${NC} • GTX 10xx series (1050, 1060, 1070, 1080, etc.)"
+        echo -e "${YELLOW}[-]${NC} • Quadro P series"
+        echo ""
+        read -p "$(echo -e "${BLUE}[?]${NC} Continue anyway? (y/n): ")" continue_choice
+        if [ "$continue_choice" != "y" ]; then
+            echo -e "${YELLOW}[-]${NC} Exiting Pascal VM configuration"
+            return 0
+        fi
+    else
+        echo -e "${GREEN}[+]${NC} Pascal GPU detected - ROM spoofing may be needed for v17+ drivers"
+    fi
+    
+    echo ""
+    echo "Choose an option:"
+    echo ""
+    echo "1) Configure existing VM"
+    echo "2) Create new basic VM with Pascal ROM spoofing"
+    echo "3) Exit"
+    echo ""
+    read -p "Enter your choice: " vm_choice
+    
+    case $vm_choice in
+        1)
+            configure_existing_vm
+            ;;
+        2)
+            create_new_pascal_vm
+            ;;
+        3)
+            echo -e "${YELLOW}[-]${NC} Exiting Pascal VM configuration"
+            return 0
+            ;;
+        *)
+            echo -e "${RED}[!]${NC} Invalid choice. Please enter 1, 2, or 3."
+            return 1
+            ;;
+    esac
+}
+
+# Function to configure existing VM with Pascal ROM spoofing
+configure_existing_vm() {
+    echo ""
+    echo -e "${GREEN}[+]${NC} Configuring existing VM with Pascal ROM spoofing"
+    echo ""
+    
+    # Get VM ID
+    while true; do
+        read -p "$(echo -e "${BLUE}[?]${NC} Enter VM ID to configure: ")" vm_id
+        if [[ "$vm_id" =~ ^[0-9]+$ ]] && [ "$vm_id" -ge 100 ] && [ "$vm_id" -le 999999 ]; then
+            # Check if VM exists
+            if qm config "$vm_id" >/dev/null 2>&1; then
+                echo -e "${GREEN}[+]${NC} Found VM $vm_id"
+                break
+            else
+                echo -e "${RED}[!]${NC} VM $vm_id does not exist"
+                read -p "$(echo -e "${BLUE}[?]${NC} Try again? (y/n): ")" retry
+                if [ "$retry" != "y" ]; then
+                    return 1
+                fi
+            fi
+        else
+            echo -e "${RED}[!]${NC} Invalid VM ID. Please enter a number between 100 and 999999"
+        fi
+    done
+    
+    # Get available GPU PCI addresses
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Scanning for NVIDIA GPUs..."
+    local gpu_list=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
+    
+    if [ -z "$gpu_list" ]; then
+        echo -e "${RED}[!]${NC} No NVIDIA GPUs found in system"
+        return 1
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Available NVIDIA GPUs:"
+    echo "$gpu_list" | nl -w2 -s') '
+    echo ""
+    
+    # Get GPU selection
+    local gpu_count=$(echo "$gpu_list" | wc -l)
+    read -p "$(echo -e "${BLUE}[?]${NC} Select GPU number (1-$gpu_count): ")" gpu_selection
+    
+    if ! [[ "$gpu_selection" =~ ^[1-9][0-9]*$ ]] || [ "$gpu_selection" -gt "$gpu_count" ]; then
+        echo -e "${RED}[!]${NC} Invalid GPU selection"
+        return 1
+    fi
+    
+    local selected_gpu=$(echo "$gpu_list" | sed -n "${gpu_selection}p")
+    local pci_address=$(echo "$selected_gpu" | awk '{print $1}' | sed 's/^/0000:/')
+    
+    echo -e "${GREEN}[+]${NC} Selected GPU: $selected_gpu"
+    echo -e "${GREEN}[+]${NC} PCI Address: $pci_address"
+    
+    # Get mdev type
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Available mdev types (common Pascal profiles):"
+    echo -e "${YELLOW}[-]${NC} • nvidia-63: GRID P40-1Q (1GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-64: GRID P40-2Q (2GB)" 
+    echo -e "${YELLOW}[-]${NC} • nvidia-65: GRID P40-3Q (3GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-66: GRID P40-4Q (4GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-67: GRID P40-6Q (6GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-68: GRID P40-8Q (8GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-69: GRID P40-12Q (12GB)"
+    echo ""
+    echo -e "${YELLOW}[-]${NC} You can also run 'mdevctl types' to see all available types"
+    echo ""
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter mdev type (e.g., nvidia-66): ")" mdev_type
+    
+    if [ -z "$mdev_type" ]; then
+        echo -e "${RED}[!]${NC} mdev type cannot be empty"
+        return 1
+    fi
+    
+    # Find next available hostpci slot
+    local existing_hostpci=$(qm config "$vm_id" | grep -o 'hostpci[0-9]*:' | sed 's/://' | sort -V | tail -1)
+    local next_slot=0
+    
+    if [ -n "$existing_hostpci" ]; then
+        local last_num=$(echo "$existing_hostpci" | sed 's/hostpci//')
+        next_slot=$((last_num + 1))
+    fi
+    
+    local hostpci_param="hostpci${next_slot}"
+    
+    # V100 device IDs for ROM spoofing
+    local device_id="0x1DB6"        # Tesla V100 PCIe device ID
+    local sub_device_id="0x12BF"    # Tesla V100 PCIe sub-device ID  
+    local sub_vendor_id="0x10de"    # NVIDIA sub-vendor ID
+    local vendor_id="0x10de"        # NVIDIA vendor ID
+    
+    # Build the hostpci configuration
+    local hostpci_config="${pci_address},device-id=${device_id},mdev=${mdev_type},sub-device-id=${sub_device_id},sub-vendor-id=${sub_vendor_id},vendor-id=${vendor_id}"
+    
+    echo ""
+    echo -e "${GREEN}[+]${NC} Configuration to add:"
+    echo -e "${YELLOW}[-]${NC} Parameter: $hostpci_param"
+    echo -e "${YELLOW}[-]${NC} Value: $hostpci_config"
+    echo ""
+    echo -e "${YELLOW}[-]${NC} This will add Pascal ROM spoofing using V100 device IDs:"
+    echo -e "${YELLOW}[-]${NC} • Device ID: $device_id (Tesla V100 PCIe)"
+    echo -e "${YELLOW}[-]${NC} • Sub-device ID: $sub_device_id"
+    echo -e "${YELLOW}[-]${NC} • Vendor/Sub-vendor ID: $vendor_id (NVIDIA)"
+    echo -e "${YELLOW}[-]${NC} • mdev Type: $mdev_type"
+    echo ""
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Apply this configuration to VM $vm_id? (y/n): ")" confirm
+    
+    if [ "$confirm" = "y" ]; then
+        echo -e "${GREEN}[+]${NC} Applying configuration..."
+        
+        # Stop VM if running
+        local vm_status=$(qm status "$vm_id" | awk '{print $2}')
+        local vm_was_running=false
+        
+        if [ "$vm_status" = "running" ]; then
+            echo -e "${YELLOW}[-]${NC} VM is running, stopping it first..."
+            qm stop "$vm_id"
+            vm_was_running=true
+            sleep 3
+        fi
+        
+        # Apply the configuration
+        if qm set "$vm_id" "$hostpci_param=$hostpci_config"; then
+            echo -e "${GREEN}[+]${NC} Successfully configured VM $vm_id with Pascal ROM spoofing"
+            echo -e "${GREEN}[+]${NC} Added $hostpci_param: $hostpci_config"
+            
+            # Optionally restart VM
+            if [ "$vm_was_running" = true ]; then
+                read -p "$(echo -e "${BLUE}[?]${NC} Restart VM $vm_id? (y/n): ")" restart_vm
+                if [ "$restart_vm" = "y" ]; then
+                    echo -e "${YELLOW}[-]${NC} Starting VM $vm_id..."
+                    qm start "$vm_id"
+                fi
+            fi
+            
+            echo ""
+            echo -e "${GREEN}[+]${NC} Configuration complete!"
+            echo -e "${YELLOW}[-]${NC} The VM now has Pascal ROM spoofing configured"
+            echo -e "${YELLOW}[-]${NC} Install NVIDIA guest drivers v16+ in the VM to use vGPU"
+            
+        else
+            echo -e "${RED}[!]${NC} Failed to configure VM $vm_id"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}[-]${NC} Configuration cancelled"
+    fi
+}
+
+# Function to create new basic VM with Pascal ROM spoofing
+create_new_pascal_vm() {
+    echo ""
+    echo -e "${GREEN}[+]${NC} Creating new basic VM with Pascal ROM spoofing"
+    echo ""
+    
+    # Get VM ID
+    while true; do
+        read -p "$(echo -e "${BLUE}[?]${NC} Enter new VM ID (100-999999): ")" vm_id
+        if [[ "$vm_id" =~ ^[0-9]+$ ]] && [ "$vm_id" -ge 100 ] && [ "$vm_id" -le 999999 ]; then
+            # Check if VM already exists
+            if qm config "$vm_id" >/dev/null 2>&1; then
+                echo -e "${RED}[!]${NC} VM $vm_id already exists"
+                read -p "$(echo -e "${BLUE}[?]${NC} Try different ID? (y/n): ")" retry
+                if [ "$retry" != "y" ]; then
+                    return 1
+                fi
+            else
+                break
+            fi
+        else
+            echo -e "${RED}[!]${NC} Invalid VM ID. Please enter a number between 100 and 999999"
+        fi
+    done
+    
+    # Get VM name
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter VM name [Pascal-VM-$vm_id]: ")" vm_name
+    if [ -z "$vm_name" ]; then
+        vm_name="Pascal-VM-$vm_id"
+    fi
+    
+    # Get available GPU PCI addresses
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Scanning for NVIDIA GPUs..."
+    local gpu_list=$(lspci -nn | grep -i 'NVIDIA Corporation' | grep -Ei '(VGA compatible controller|3D controller)')
+    
+    if [ -z "$gpu_list" ]; then
+        echo -e "${RED}[!]${NC} No NVIDIA GPUs found in system"
+        return 1
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Available NVIDIA GPUs:"
+    echo "$gpu_list" | nl -w2 -s') '
+    echo ""
+    
+    # Support multiple GPU selection
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter GPU numbers to add (e.g., '1' or '1,3' for multiple): ")" gpu_selections
+    
+    # Parse GPU selections
+    IFS=',' read -ra ADDR <<< "$gpu_selections"
+    declare -a selected_gpus
+    declare -a selected_pci_addresses
+    
+    local gpu_count=$(echo "$gpu_list" | wc -l)
+    
+    for selection in "${ADDR[@]}"; do
+        selection=$(echo "$selection" | tr -d ' ')  # Remove whitespace
+        if [[ "$selection" =~ ^[1-9][0-9]*$ ]] && [ "$selection" -le "$gpu_count" ]; then
+            local selected_gpu=$(echo "$gpu_list" | sed -n "${selection}p")
+            local pci_address=$(echo "$selected_gpu" | awk '{print $1}' | sed 's/^/0000:/')
+            selected_gpus+=("$selected_gpu")
+            selected_pci_addresses+=("$pci_address")
+        else
+            echo -e "${RED}[!]${NC} Invalid GPU selection: $selection"
+            return 1
+        fi
+    done
+    
+    if [ ${#selected_gpus[@]} -eq 0 ]; then
+        echo -e "${RED}[!]${NC} No valid GPUs selected"
+        return 1
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Selected GPUs:"
+    for i in "${!selected_gpus[@]}"; do
+        echo -e "${YELLOW}[-]${NC} GPU $((i+1)): ${selected_gpus[$i]}"
+        echo -e "${YELLOW}[-]${NC} PCI: ${selected_pci_addresses[$i]}"
+    done
+    
+    # Get mdev type for all GPUs
+    echo ""
+    echo -e "${YELLOW}[-]${NC} Available mdev types (common Pascal profiles):"
+    echo -e "${YELLOW}[-]${NC} • nvidia-63: GRID P40-1Q (1GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-64: GRID P40-2Q (2GB)" 
+    echo -e "${YELLOW}[-]${NC} • nvidia-65: GRID P40-3Q (3GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-66: GRID P40-4Q (4GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-67: GRID P40-6Q (6GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-68: GRID P40-8Q (8GB)"
+    echo -e "${YELLOW}[-]${NC} • nvidia-69: GRID P40-12Q (12GB)"
+    echo ""
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter mdev type for all GPUs (e.g., nvidia-66): ")" mdev_type
+    
+    if [ -z "$mdev_type" ]; then
+        echo -e "${RED}[!]${NC} mdev type cannot be empty"
+        return 1
+    fi
+    
+    # V100 device IDs for ROM spoofing
+    local device_id="0x1DB6"        # Tesla V100 PCIe device ID
+    local sub_device_id="0x12BF"    # Tesla V100 PCIe sub-device ID  
+    local sub_vendor_id="0x10de"    # NVIDIA sub-vendor ID
+    local vendor_id="0x10de"        # NVIDIA vendor ID
+    
+    # Build hostpci configurations
+    declare -a hostpci_configs
+    for i in "${!selected_pci_addresses[@]}"; do
+        local pci_address="${selected_pci_addresses[$i]}"
+        local hostpci_config="${pci_address},device-id=${device_id},mdev=${mdev_type},sub-device-id=${sub_device_id},sub-vendor-id=${sub_vendor_id},vendor-id=${vendor_id}"
+        hostpci_configs+=("$hostpci_config")
+    done
+    
+    echo ""
+    echo -e "${GREEN}[+]${NC} VM Configuration Summary:"
+    echo -e "${YELLOW}[-]${NC} VM ID: $vm_id"
+    echo -e "${YELLOW}[-]${NC} VM Name: $vm_name"
+    echo -e "${YELLOW}[-]${NC} GPUs to add: ${#selected_gpus[@]}"
+    echo -e "${YELLOW}[-]${NC} mdev Type: $mdev_type"
+    echo ""
+    echo -e "${YELLOW}[-]${NC} hostpci configurations:"
+    for i in "${!hostpci_configs[@]}"; do
+        echo -e "${YELLOW}[-]${NC} hostpci${i}: ${hostpci_configs[$i]}"
+    done
+    echo ""
+    echo -e "${YELLOW}[-]${NC} ROM Spoofing (V100 IDs):"
+    echo -e "${YELLOW}[-]${NC} • Device ID: $device_id (Tesla V100 PCIe)"
+    echo -e "${YELLOW}[-]${NC} • Sub-device ID: $sub_device_id"
+    echo -e "${YELLOW}[-]${NC} • Vendor/Sub-vendor ID: $vendor_id (NVIDIA)"
+    echo ""
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Create VM with this configuration? (y/n): ")" confirm
+    
+    if [ "$confirm" = "y" ]; then
+        echo -e "${GREEN}[+]${NC} Creating basic VM..."
+        
+        # Create basic VM with minimal configuration
+        local vm_create_cmd="qm create $vm_id --name '$vm_name' --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0 --ostype l26"
+        
+        # Add hostpci parameters
+        for i in "${!hostpci_configs[@]}"; do
+            vm_create_cmd="$vm_create_cmd --hostpci${i} '${hostpci_configs[$i]}'"
+        done
+        
+        if eval "$vm_create_cmd"; then
+            echo -e "${GREEN}[+]${NC} Successfully created VM $vm_id with Pascal ROM spoofing"
+            echo ""
+            echo -e "${GREEN}[+]${NC} VM created with:"
+            echo -e "${YELLOW}[-]${NC} • 2GB RAM (you may want to increase this)"
+            echo -e "${YELLOW}[-]${NC} • 2 CPU cores"
+            echo -e "${YELLOW}[-]${NC} • Network interface on vmbr0"
+            echo -e "${YELLOW}[-]${NC} • ${#selected_gpus[@]} GPU(s) with Pascal ROM spoofing"
+            echo ""
+            echo -e "${YELLOW}[!]${NC} IMPORTANT: You still need to:"
+            echo -e "${YELLOW}[-]${NC} • Add storage (hard disk) to the VM"
+            echo -e "${YELLOW}[-]${NC} • Install an operating system"
+            echo -e "${YELLOW}[-]${NC} • Install NVIDIA guest drivers v16+ in the VM"
+            echo -e "${YELLOW}[-]${NC} • Configure the VM settings as needed"
+            echo ""
+            echo -e "${GREEN}[+]${NC} VM $vm_id is ready for further configuration in Proxmox web interface"
+            
+        else
+            echo -e "${RED}[!]${NC} Failed to create VM $vm_id"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}[-]${NC} VM creation cancelled"
+    fi
+}
+
 # Check for root
 if [[ $EUID -ne 0 ]]; then
     echo "This script must be run as root. Please use sudo or execute as root user."
@@ -887,6 +1274,64 @@ if [ "$VERBOSE" = "true" ]; then
 fi
 
 echo ""
+
+# Function to create vgpu_unlock configuration for Tesla P4 cards
+create_vgpu_unlock_config() {
+    local config_file="/etc/vgpu_unlock/config.toml"
+    local tesla_p4_detected=false
+    
+    # Check for Tesla P4 cards (device ID 1bb3)
+    if lspci -nn | grep -i 'NVIDIA Corporation' | grep -q '1bb3'; then
+        tesla_p4_detected=true
+        echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected - creating specialized config.toml"
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Creating vgpu_unlock configuration file"
+    
+    # Create the config.toml file
+    cat > "$config_file" << 'EOF'
+# vgpu_unlock-rs configuration file
+# See: https://github.com/mbilker/vgpu_unlock-rs
+
+[logging]
+level = "INFO"
+
+[general]
+# For Tesla P4 cards, unlock must be set to false
+# See: https://github.com/mbilker/vgpu_unlock-rs/issues/tesla-p4
+EOF
+
+    # Add Tesla P4 specific configuration
+    if [ "$tesla_p4_detected" = true ]; then
+        cat >> "$config_file" << 'EOF'
+# Tesla P4 requires unlock = false
+unlock = false
+
+# Tesla P4 specific settings
+[tesla_p4]
+# Tesla P4 can use almost any driver version but requires specific configuration
+# The driver must be patched on the host system
+driver_patching_required = true
+EOF
+        echo -e "${GREEN}[+]${NC} Tesla P4 specific configuration added (unlock = false)"
+    else
+        cat >> "$config_file" << 'EOF'
+unlock = true
+EOF
+        echo -e "${GREEN}[+]${NC} Standard vgpu_unlock configuration added (unlock = true)"
+    fi
+    
+    # Set proper permissions
+    chmod 644 "$config_file"
+    chown root:root "$config_file" 2>/dev/null || true
+    
+    echo -e "${GREEN}[+]${NC} vgpu_unlock configuration created: $config_file"
+    
+    if [ "$tesla_p4_detected" = true ]; then
+        echo -e "${YELLOW}[-]${NC} Tesla P4 detected: Driver must be patched on host system"
+        echo -e "${YELLOW}[-]${NC} Configuration set to unlock = false as required for P4 cards"
+    fi
+}
 
 # Function to create vGPU overrides following PoloLoco's guide
 create_vgpu_overrides() {
@@ -1075,7 +1520,8 @@ case $STEP in
     echo "4) Download vGPU drivers"
     echo "5) License vGPU"
     echo "6) Create vGPU overrides (PoloLoco guide)"
-    echo "7) Exit"
+    echo "7) Configure Pascal VM (ROM spoofing)"
+    echo "8) Exit"
     echo ""
     read -p "Enter your choice: " choice
 
@@ -1633,22 +2079,32 @@ case $STEP in
                 vendor_id=$(cat /proc/cpuinfo | grep vendor_id | awk 'NR==1{print $3}')
 
                 if [ "$vendor_id" = "AuthenticAMD" ]; then
-                    echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}"
-                    # Check if the required options are already present in GRUB_CMDLINE_LINUX_DEFAULT
-                    if grep -q "amd_iommu=on iommu=pt" /etc/default/grub; then
-                        echo -e "${YELLOW}[-]${NC} AMD IOMMU options are already set in GRUB_CMDLINE_LINUX_DEFAULT"
+                    echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}${NC}"
+                    # Remove iommu=pt if present (can cause unexpected behavior)
+                    if grep -q "iommu=pt" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter (can cause unexpected behavior)"
+                        sed -i 's/ iommu=pt//g' /etc/default/grub
+                    fi
+                    # Check if the required AMD IOMMU option is already present
+                    if grep -q "amd_iommu=on" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} AMD IOMMU option already set in GRUB_CMDLINE_LINUX_DEFAULT"
                     else
-                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ amd_iommu=on iommu=pt"/' /etc/default/grub
-                        echo -e "${GREEN}[+]${NC} AMD IOMMU options added to GRUB_CMDLINE_LINUX_DEFAULT"
+                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ amd_iommu=on"/' /etc/default/grub
+                        echo -e "${GREEN}[+]${NC} AMD IOMMU option added to GRUB_CMDLINE_LINUX_DEFAULT"
                     fi
                 elif [ "$vendor_id" = "GenuineIntel" ]; then
                     echo -e "${GREEN}[+]${NC} Your CPU vendor id: ${YELLOW}${vendor_id}${NC}"
-                    # Check if the required options are already present in GRUB_CMDLINE_LINUX_DEFAULT
-                    if grep -q "intel_iommu=on iommu=pt" /etc/default/grub; then
-                        echo -e "${YELLOW}[-]${NC} Intel IOMMU options are already set in GRUB_CMDLINE_LINUX_DEFAULT"
+                    # Remove iommu=pt if present (can cause unexpected behavior)
+                    if grep -q "iommu=pt" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} Removing iommu=pt parameter (can cause unexpected behavior)"
+                        sed -i 's/ iommu=pt//g' /etc/default/grub
+                    fi
+                    # Check if the required Intel IOMMU option is already present
+                    if grep -q "intel_iommu=on" /etc/default/grub; then
+                        echo -e "${YELLOW}[-]${NC} Intel IOMMU option already set in GRUB_CMDLINE_LINUX_DEFAULT"
                     else
-                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ intel_iommu=on iommu=pt"/' /etc/default/grub
-                        echo -e "${GREEN}[+]${NC} Intel IOMMU options added to GRUB_CMDLINE_LINUX_DEFAULT"
+                        sed -i '/GRUB_CMDLINE_LINUX_DEFAULT/s/"$/ intel_iommu=on"/' /etc/default/grub
+                        echo -e "${GREEN}[+]${NC} Intel IOMMU option added to GRUB_CMDLINE_LINUX_DEFAULT"
                     fi
                 else
                     echo -e "${RED}[!]${NC} Unknown CPU architecture. Unable to configure GRUB"
@@ -1688,9 +2144,14 @@ case $STEP in
                     #echo "building vgpu_unlock-rs"
                     run_command "Building vgpu_unlock-rs" "info" "cargo build --release"
 
-                    # Creating vgpu directory and toml file
+                    # Creating vgpu directory and configuration files
                     echo -e "${GREEN}[+]${NC} Creating vGPU files and directories"
                     mkdir -p /etc/vgpu_unlock
+                    
+                    # Create vgpu_unlock configuration (Tesla P4 aware)
+                    create_vgpu_unlock_config
+                    
+                    # Create empty profile override file (can be customized later)
                     touch /etc/vgpu_unlock/profile_override.toml
 
                     # Creating systemd folders
@@ -1934,14 +2395,23 @@ case $STEP in
             
             exit 0
             ;;
-        7)
+        7)  
+            echo ""
+            echo "This will help you configure Pascal VM with ROM spoofing"         
+            echo ""
+            
+            configure_pascal_vm
+            
+            exit 0
+            ;;
+        8)
             echo ""
             echo "Exiting script."
             exit 0
             ;;
         *)
             echo ""
-            echo "Invalid choice. Please enter 1, 2, 3, 4, 5, 6 or 7."
+            echo "Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7 or 8."
             echo ""
             ;;
         esac

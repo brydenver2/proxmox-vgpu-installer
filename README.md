@@ -50,8 +50,8 @@ Changes in version 1.3 (PoloLoco Guide Integration)
 	**vGPU Override Configuration**: Added comprehensive vGPU override creation following PoloLoco's guide
 	**Enhanced Pascal Support**: Improved Pascal card support with v16.5 vgpuConfig.xml for v16.8+ drivers
 	**User-Prompted Downloads**: New prompt system for driver URLs from NVIDIA Licensing Portal or trusted sources
-	**Command Line Options**: Added --create-overrides option for vGPU override configuration
-	**Menu Integration**: New menu option (6) for creating vGPU overrides
+	**Command Line Options**: Added --create-overrides and --configure-pascal-vm options
+	**Menu Integration**: New menu options for vGPU overrides (6) and Pascal VM configuration (7)
 	**PoloLoco Compliance**: All changes follow PoloLoco's official recommendations and best practices
 
 ### Key Features Added
@@ -70,7 +70,15 @@ Changes in version 1.3 (PoloLoco Guide Integration)
 - **Automatic Detection**: Supports Tesla P4, Tesla P40, GTX 10xx series, and Quadro P series
 - **v16.8+ Compatibility**: Automatically applies v16.5 vgpuConfig.xml when using v16.8+ drivers with Pascal cards
 - **Tesla P4 Enhanced**: Improved Tesla P4 support with proper profile detection
+- **VM ROM Spoofing**: Configure existing VMs or create new VMs with V100 device ID spoofing
+- **Multiple GPU Support**: Add multiple Pascal cards to a single VM with proper ROM spoofing
 - **Community Guidelines**: Follows PoloLoco's recommendations for Pascal card usage
+
+### Tesla P4 Specific Improvements
+- **vgpu_unlock Configuration**: Automatically creates config.toml with `unlock = false` for P4 cards
+- **IOMMU Optimization**: Removes problematic `iommu=pt` parameter for better P4 stability
+- **Profile Detection**: Enhanced validation script specifically for Tesla P4 profile verification
+- **Troubleshooting**: Comprehensive Tesla P4 troubleshooting guidance and validation tools
 
 ### vGPU Override Features
 - **Profile Configuration**: Configure display settings (resolution, displays, max_pixels)
@@ -156,6 +164,38 @@ For Pascal cards (Tesla P4, Tesla P40, GTX 10xx, Quadro P series) with v16.8+ dr
 - Follows PoloLoco's recommendations for Pascal card usage
 - Provides proper troubleshooting guidance
 
+### Pascal VM Configuration (ROM Spoofing)
+New in v1.3: Configure Pascal cards for Proxmox VMs with ROM spoofing for v17+ drivers:
+
+```bash
+# Configure Pascal VM with ROM spoofing
+sudo ./proxmox-installer.sh --configure-pascal-vm
+
+# Or use menu option 7 during installation
+sudo ./proxmox-installer.sh
+# Select option 7: Configure Pascal VM (ROM spoofing)
+```
+
+**Features:**
+- **Configure Existing VMs**: Add Pascal ROM spoofing to existing Proxmox VMs
+- **Create New VMs**: Create basic VMs with Pascal ROM spoofing pre-configured
+- **Multiple GPU Support**: Add multiple Pascal cards to a single VM
+- **V100 Device ID Spoofing**: Uses Tesla V100 device IDs to trick guest drivers
+- **Automatic PCI Detection**: Scans and lists available NVIDIA GPUs
+- **mdev Type Selection**: Choose appropriate vGPU profiles (nvidia-63 to nvidia-69)
+
+**Example Configuration:**
+```
+hostpci0: 0000:04:00.0,device-id=0x1DB6,mdev=nvidia-66,sub-device-id=0x12BF,sub-vendor-id=0x10de,vendor-id=0x10de
+hostpci1: 0000:82:00.0,device-id=0x1DB6,mdev=nvidia-66,sub-device-id=0x12BF,sub-vendor-id=0x10de,vendor-id=0x10de
+```
+
+**Usage Notes:**
+- Required for Pascal cards with NVIDIA drivers v17+
+- Automatically stops/starts VMs during configuration
+- Creates basic VMs that require further setup (storage, OS installation)
+- Compatible with existing Pascal GPU detection system
+
 ### Command Line Options (Updated)
 ```bash
 ./proxmox-installer.sh [OPTIONS]
@@ -170,6 +210,7 @@ Options:
   --tesla-p4-help       Show Tesla P4 troubleshooting guide
   --tesla-p4-status     Check Tesla P4 vGPU profile status
   --create-overrides    Create vGPU overrides following PoloLoco's guide
+  --configure-pascal-vm Configure Pascal card ROM spoofing for Proxmox VMs
 ```
 
 ### Menu Options (Updated)
@@ -179,7 +220,8 @@ Options:
 4. Download vGPU drivers (now with user-provided URLs)
 5. License vGPU
 6. **Create vGPU overrides (PoloLoco guide)** ← New in v1.3
-7. Exit
+7. **Configure Pascal VM (ROM spoofing)** ← New in v1.3
+8. Exit
 
 ### PoloLoco Guide Compliance
 This script now fully follows PoloLoco's official vGPU guide:
