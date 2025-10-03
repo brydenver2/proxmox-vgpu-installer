@@ -3022,8 +3022,20 @@ case $STEP in
         if [ "$VGPU_SUPPORT" = "Yes" ]; then
             write_log "Installing vGPU driver with patching for non-native vGPU support"
             
+            # Check if patch is marked as not available
+            if [ "$driver_patch" = "NO_PATCH" ]; then
+                echo -e "${YELLOW}[-]${NC} No patch available for driver version $driver_version (as of October 2025)"
+                echo -e "${YELLOW}[-]${NC} This driver version requires natively supported GPU hardware"
+                echo -e "${YELLOW}[-]${NC} Continuing with original driver installation..."
+                write_log "WARNING: No patch available for driver version $driver_version"
+                write_log "Continuing with original driver installation"
+                
+                # Run the regular driver installer for non-native GPU without patch
+                echo -e "${YELLOW}[-]${NC} Installing original vGPU driver (this may take several minutes)..."
+                log_system_info "kernel"  # Log kernel state before installation
+                run_command "Installing original driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
             # Check if patch file exists first
-            if [ -f "$VGPU_DIR/vgpu-proxmox/$driver_patch" ]; then
+            elif [ -f "$VGPU_DIR/vgpu-proxmox/$driver_patch" ]; then
                 echo -e "${YELLOW}[-]${NC} Patch file found, applying vGPU patch to driver..."
                 write_log "Patch file found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
                 
