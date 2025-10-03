@@ -731,8 +731,16 @@ configure_fastapi_dls() {
     echo -e "${YELLOW}[!]${NC} NVIDIA vGPU Licensing Information:"
     echo "  - Each vGPU-enabled GPU requires proper NVIDIA vGPU licensing"
     echo "  - Multi-GPU setups require licensing for ALL vGPU-enabled cards"
-    echo "  - FastAPI-DLS provides licensing server functionality"
+    echo "  - FastAPI-DLS v2.x provides licensing server functionality"
     echo "  - Ensure sufficient licenses for your vGPU deployment"
+    echo ""
+    echo -e "${GREEN}[+]${NC} FastAPI-DLS v2.x Compatibility:"
+    echo "  - Backwards compatible with v17.x drivers"
+    echo "  - Supports v18.x and v19.x drivers with gridd-unlock-patcher"
+    echo "  - Uses latest Docker image: collinwebdesigns/fastapi-dls:latest"
+    echo ""
+    echo -e "${YELLOW}[!]${NC} Note: For v18.x and v19.x drivers, ensure gridd-unlock-patcher is properly configured"
+    echo "  - See: https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher"
     echo ""
     read -p "$(echo -e "${BLUE}[?]${NC} Do you want to setup vGPU licensing server? (y/n): ")" choice
     echo ""
@@ -747,7 +755,7 @@ configure_fastapi_dls() {
         apt update; \
         apt install docker-ce docker-compose -y"
 
-        # Docker pull FastAPI-DLS
+        # Docker pull FastAPI-DLS v2.x (supports v17.x, v18.x, v19.x drivers)
         run_command "Docker pull FastAPI-DLS" "info" "docker pull collinwebdesigns/fastapi-dls:latest; \
         working_dir=/opt/docker/fastapi-dls/cert; \
         mkdir -p \$working_dir; \
@@ -774,7 +782,8 @@ configure_fastapi_dls() {
         echo ""
 
         echo -e "${GREEN}[+]${NC} Generate Docker YAML compose file"
-        # Generate the Docker Compose YAML file
+        # Generate the Docker Compose YAML file for FastAPI-DLS v2.x
+        # v2.x supports v17.x, v18.x, v19.x drivers (v18.x/v19.x require gridd-unlock-patcher)
         cat > "$fastapi_dir/docker-compose.yml" <<EOF
 version: '3.9'
 
@@ -788,7 +797,7 @@ x-dls-variables: &dls-variables
 
 services:
   wvthoog-fastapi-dls:
-    image: collinwebdesigns/fastapi-dls:latest
+    image: collinwebdesigns/fastapi-dls:latest  # v2.x - supports v17.x, v18.x, v19.x
     restart: always
     container_name: wvthoog-fastapi-dls
     environment:

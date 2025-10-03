@@ -2,8 +2,13 @@
 This is a little Bash script that configures a Proxmox 7 or 8 server to use Nvidia vGPU's. 
 For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-vgpu-v3/
 
-## WARNING !!!
-- fastapi-dls is not working correctly with v18.x but working fine on v17.x, please consider this for extended use
+## FastAPI-DLS Licensing Information
+- **FastAPI-DLS Version 2.x** is backwards compatible to v17.x and supports **v18.x** and **v19.x** driver releases
+- For v18.x and v19.x drivers, [gridd-unlock-patcher](https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher) is required for proper licensing functionality
+- The installer uses the latest FastAPI-DLS v2.x Docker image from `collinwebdesigns/fastapi-dls:latest`
+- For more information, see the [FastAPI-DLS documentation](https://git.collinwebdesigns.de/oscar.krause/fastapi-dls)
+
+## Driver Information
 - 17.6 & 18.1 is download only and only for natively support vGPU, lookup on NVIDIA for supported GPU ([v18.x](https://docs.nvidia.com/vgpu/18.0/product-support-matrix/index.html) & [v17.x](https://docs.nvidia.com/vgpu/17.0/product-support-matrix/index.html))
 
 ## Kernel Compatibility Requirements
@@ -119,6 +124,10 @@ Changes in version 1.2
   - Proper licensing guidance for multi-GPU deployments
 - Only non-vGPU capable or explicitly excluded GPUs are configured for passthrough using UDEV rules
 - Always write config.txt to script directory
+- **FastAPI-DLS v2.x Support**: Updated to support v17.x, v18.x, and v19.x drivers
+  - v18.x and v19.x require [gridd-unlock-patcher](https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher)
+  - Backward compatible with v17.x (no additional requirements)
+  - See [FastAPI-DLS v2.x Integration Guide](docs/FASTAPI_DLS_V2.md) for details
 - Use Docker for hosting FastAPI-DLS (licensing) or using this docker [fastapi-dls](https://github.com/GreenDamTan/fastapi-dls_mirror) container on any host or capable server
 - Create Powershell (ps1) and Bash (sh) files to retrieve licenses from FastAPI-DLS
 
@@ -255,7 +264,8 @@ The installer now provides **NVIDIA vGPU 16.0 compliant multi-GPU support** with
 #### Licensing Compliance
 - Clear guidance on licensing requirements for multi-GPU deployments
 - Each vGPU-enabled GPU requires proper NVIDIA vGPU licensing
-- FastAPI-DLS configuration with multi-GPU considerations
+- FastAPI-DLS v2.x configuration with multi-GPU considerations
+- See [FastAPI-DLS v2.x Integration Guide](docs/FASTAPI_DLS_V2.md) for licensing details
 
 #### System Resource Validation
 - Warnings about power and cooling requirements for multi-GPU setups
