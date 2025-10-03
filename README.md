@@ -48,8 +48,7 @@ Changes in version 1.3 (PoloLoco Guide Integration)
 	**Repository Integration**: Updated to use PoloLoco's official vgpu-proxmox repository (https://gitlab.com/polloloco/vgpu-proxmox.git)
 	**Download System Overhaul**: Removed hardcoded mega.nz download links - users must now provide driver URLs from official sources
 	**vGPU Override Configuration**: Added comprehensive vGPU override creation following PoloLoco's guide
-	**Enhanced Pascal Support**: Improved Pascal card support with v16.4 vgpuConfig.xml for v17.x+ drivers
-	**Pascal VM ROM Spoofing**: Added automated VM configuration with Pascal ROM spoofing for v17+ drivers
+	**Enhanced Pascal Support**: Improved Pascal card support with v16.5 vgpuConfig.xml for v16.8+ drivers
 	**User-Prompted Downloads**: New prompt system for driver URLs from NVIDIA Licensing Portal or trusted sources
 	**Command Line Options**: Added --create-overrides and --configure-pascal-vm options
 	**Menu Integration**: New menu options for vGPU overrides (6) and Pascal VM configuration (7)
@@ -58,8 +57,7 @@ Changes in version 1.3 (PoloLoco Guide Integration)
 ### Key Features Added
 - **vGPU Profile Overrides**: Configure custom display settings, VRAM allocation, and VM-specific overrides
 - **Pascal Card Detection**: Automatic detection of Pascal GPUs (Tesla P4, Tesla P40, GTX 10xx, Quadro P series)
-- **Pascal VM Configuration**: Automated VM setup with ROM spoofing for Pascal cards using v17+ drivers
-- **v16.4 vgpuConfig.xml Handling**: Automatic copying of v16.4 configuration for Pascal cards with v17.x+ drivers
+- **v16.5 vgpuConfig.xml Handling**: Automatic copying of v16.5 configuration for Pascal cards with v16.8+ drivers
 - **Official Source Compliance**: Encourages use of NVIDIA Licensing Portal and official sources
 - **Enhanced Help System**: Updated help messages and troubleshooting guides
 
@@ -70,7 +68,7 @@ Changes in version 1.3 (PoloLoco Guide Integration)
 
 ### Pascal GPU Support (Following PoloLoco's Guide)
 - **Automatic Detection**: Supports Tesla P4, Tesla P40, GTX 10xx series, and Quadro P series
-- **v17.x Compatibility**: Automatically applies v16.4 vgpuConfig.xml when using v17.x+ drivers with Pascal cards
+- **v16.8+ Compatibility**: Automatically applies v16.5 vgpuConfig.xml when using v16.8+ drivers with Pascal cards
 - **Tesla P4 Enhanced**: Improved Tesla P4 support with proper profile detection
 - **VM ROM Spoofing**: Configure existing VMs or create new VMs with V100 device ID spoofing
 - **Multiple GPU Support**: Add multiple Pascal cards to a single VM with proper ROM spoofing
@@ -160,9 +158,9 @@ sudo ./proxmox-installer.sh
 ```
 
 ### Pascal Card Support (Enhanced)
-For Pascal cards (Tesla P4, Tesla P40, GTX 10xx, Quadro P series) with v17.x+ drivers:
+For Pascal cards (Tesla P4, Tesla P40, GTX 10xx, Quadro P series) with v16.8+ drivers:
 - The script automatically detects Pascal GPUs
-- Downloads and applies v16.4 vgpuConfig.xml for compatibility
+- Downloads and applies v16.5 vgpuConfig.xml for compatibility
 - Follows PoloLoco's recommendations for Pascal card usage
 - Provides proper troubleshooting guidance
 

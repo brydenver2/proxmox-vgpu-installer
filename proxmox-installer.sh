@@ -161,11 +161,12 @@ display_pascal_psa() {
     echo -e "  • Native vGPU support without complex workarounds"
     echo -e "  • Recommended by PoloLoco and the vGPU community"
     echo ""
-    echo -e "${YELLOW}[CAUTION]${NC} v17.x+ drivers (550.x, 570.x series):"
-    echo -e "  • NVIDIA dropped Pascal support starting from v17.0"
-    echo -e "  • Requires v16.4 vgpuConfig.xml workaround (complex setup)"
+    echo -e "${YELLOW}[CAUTION]${NC} v16.8+ drivers (535.216.01+, 550.x, 570.x series):"
+    echo -e "  • May need v16.5 vgpuConfig.xml for optimal Pascal compatibility"
+    echo -e "  • v16.8+ requires Pascal configuration workaround"
+    echo -e "  • v17.x+: NVIDIA dropped Pascal support starting from v17.0"
     echo -e "  • May have reduced stability or compatibility issues"
-    echo -e "  • Only use if you specifically need v17.x+ features"
+    echo -e "  • Only use if you specifically need newer driver features"
     echo ""
     echo -e "${RED}[NOT RECOMMENDED]${NC} v18.x drivers for Pascal cards:"
     echo -e "  • No native Pascal support"
@@ -173,8 +174,8 @@ display_pascal_psa() {
     echo -e "  • Potential stability and performance issues"
     echo ""
     echo -e "${BLUE}Pascal GPU Support Summary:${NC}"
-    echo -e "  • ${GREEN}✓ v16.x drivers${NC}: Native support (recommended: v16.9)"
-    echo -e "  • ${YELLOW}⚠ v17.x drivers${NC}: Requires v16.4 vgpuConfig.xml workaround"
+    echo -e "  • ${GREEN}✓ v16.0-v16.7 drivers${NC}: Native support (recommended: v16.9)"
+    echo -e "  • ${YELLOW}⚠ v16.8+ drivers${NC}: Requires v16.5 vgpuConfig.xml workaround"
     echo -e "  • ${RED}✗ v18.x drivers${NC}: Not recommended for Pascal cards"
     echo ""
     echo -e "${RED}========================================================================${NC}"
@@ -192,19 +193,19 @@ apply_pascal_vgpu_fix() {
         
         echo -e "${YELLOW}[-]${NC} Pascal GPU detected with driver v$driver_version"
         
-        # Check if we're using v17.x or newer driver
-        if [[ "$driver_version" =~ ^17\.|^18\. ]]; then
-            echo -e "${YELLOW}[-]${NC} Following PoloLoco's guide: Pascal cards with v17.x+ drivers need v16.4 vgpuConfig.xml"
-            echo -e "${YELLOW}[-]${NC} This is required because NVIDIA dropped Pascal support starting from v17.0"
+        # Check if we're using v16.8 or newer driver
+        if [[ "$driver_version" =~ ^16\.[89]$|^17\.|^18\. ]]; then
+            echo -e "${YELLOW}[-]${NC} Following PoloLoco's guide: Pascal cards with v16.8+ drivers need v16.5 vgpuConfig.xml"
+            echo -e "${YELLOW}[-]${NC} This is required because newer drivers need compatible Pascal configuration"
             
-            # Define v16.4 driver details
-            local v164_driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
-            local v164_driver_md5="bad6e09aeb58942750479f091bb9c4b6"
+            # Define v16.5 driver details
+            local v165_driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
+            local v165_driver_md5="bad6e09aeb58942750479f091bb9c4b6"
             
-            # Prompt user for v16.4 driver download URL
-            echo -e "${YELLOW}[-]${NC} For Pascal GPU compatibility, you need driver v16.4 for its vgpuConfig.xml"
+            # Prompt user for v16.5 driver download URL
+            echo -e "${YELLOW}[-]${NC} For Pascal GPU compatibility, you need driver v16.5 for its vgpuConfig.xml"
             local driver_url
-            driver_url=$(prompt_for_driver_url "$v164_driver_filename" "16.4")
+            driver_url=$(prompt_for_driver_url "$v165_driver_filename" "16.5")
             
             # Create temporary directory for Pascal fix
             local temp_dir="/tmp/pascal_fix"
@@ -215,26 +216,26 @@ apply_pascal_vgpu_fix() {
                 return 1
             }
             
-            # Download v16.4 driver from user-provided URL
-            if ! download_driver_from_url "$v164_driver_filename" "$driver_url" "$v164_driver_md5"; then
-                echo -e "${RED}[!]${NC} Failed to download v16.4 driver for Pascal compatibility"
+            # Download v16.5 driver from user-provided URL
+            if ! download_driver_from_url "$v165_driver_filename" "$driver_url" "$v165_driver_md5"; then
+                echo -e "${RED}[!]${NC} Failed to download v16.5 driver for Pascal compatibility"
                 cd "$original_dir" || true
                 return 1
             fi
             
             # Extract the driver to get vgpuConfig.xml
-            echo -e "${YELLOW}[-]${NC} Extracting v16.4 driver for vgpuConfig.xml"
-            chmod +x "$v164_driver_filename"
-            if ! timeout 60 ./"$v164_driver_filename" -x >/dev/null 2>&1; then
-                echo -e "${RED}[!]${NC} Failed to extract v16.4 driver"
+            echo -e "${YELLOW}[-]${NC} Extracting v16.5 driver for vgpuConfig.xml"
+            chmod +x "$v165_driver_filename"
+            if ! timeout 60 ./"$v165_driver_filename" -x >/dev/null 2>&1; then
+                echo -e "${RED}[!]${NC} Failed to extract v16.5 driver"
                 cd "$original_dir" || true
                 return 1
             fi
             
             # Check if vgpuConfig.xml was extracted
-            local extracted_dir="${v164_driver_filename%.run}"
+            local extracted_dir="${v165_driver_filename%.run}"
             if [ ! -f "$extracted_dir/vgpuConfig.xml" ]; then
-                echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted v16.4 driver"
+                echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted v16.5 driver"
                 cd "$original_dir" || true
                 return 1
             fi
@@ -255,8 +256,8 @@ apply_pascal_vgpu_fix() {
                 cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file" 2>/dev/null || true
             fi
             
-            # Copy v16.4 configuration for Pascal compatibility
-            echo -e "${GREEN}[+]${NC} Installing v16.4 vgpuConfig.xml for Pascal compatibility"
+            # Copy v16.5 configuration for Pascal compatibility
+            echo -e "${GREEN}[+]${NC} Installing v16.5 vgpuConfig.xml for Pascal compatibility"
             
             if cp "$extracted_dir/vgpuConfig.xml" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
                 echo -e "${GREEN}[+]${NC} File copied successfully"
@@ -283,20 +284,25 @@ apply_pascal_vgpu_fix() {
                 echo -e "${YELLOW}[-]${NC} Verify with: mdevctl types"
                 
             else
-                echo -e "${RED}[!]${NC} Failed to copy v16.4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
+                echo -e "${RED}[!]${NC} Failed to copy v16.5 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
                 echo -e "${RED}[!]${NC} Pascal vGPU fix could not be applied"
                 cd "$original_dir" || true
                 return 1
             fi
         else
-            # Using v16.x driver with Pascal - should work normally
-            echo -e "${GREEN}[+]${NC} Using v$driver_version driver with Pascal GPU - excellent choice!"
-            echo -e "${YELLOW}[-]${NC} v16.x drivers have native Pascal support"
-            
-            # Special message for v16.9 (recommended for Pascal)
-            if [[ "$driver_version" =~ ^16\.9 ]]; then
-                echo -e "${GREEN}[+]${NC} ${YELLOW}v16.9 is the recommended driver for Pascal cards per PoloLoco's guide${NC}"
-                echo -e "${GREEN}[+]${NC} This provides the best compatibility and stability for Pascal architecture"
+            # Using v16.0-v16.7 driver with Pascal - should work normally  
+            if [[ "$driver_version" =~ ^16\.[0-7]$ ]]; then
+                echo -e "${GREEN}[+]${NC} Using v$driver_version driver with Pascal GPU - excellent choice!"
+                echo -e "${YELLOW}[-]${NC} v16.0-v16.7 drivers have native Pascal support"
+            else
+                echo -e "${GREEN}[+]${NC} Using v$driver_version driver with Pascal GPU - good choice!"
+                echo -e "${YELLOW}[-]${NC} v16.x drivers provide Pascal support"
+                
+                # Special message for v16.9 (recommended for Pascal)
+                if [[ "$driver_version" =~ ^16\.9 ]]; then
+                    echo -e "${GREEN}[+]${NC} ${YELLOW}v16.9 is the recommended driver for Pascal cards per PoloLoco's guide${NC}"
+                    echo -e "${GREEN}[+]${NC} This provides the best compatibility and stability for Pascal architecture"
+                fi
             fi
         fi
         
