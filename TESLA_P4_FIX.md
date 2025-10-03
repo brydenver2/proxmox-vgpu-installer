@@ -19,7 +19,25 @@ The installer now automatically detects Tesla P4 cards and applies a simple conf
 3. **Primary Download**: Downloads NVIDIA driver 16.4 (535.161.05) with retry logic
 4. **Local Check**: Checks for existing local driver files if download fails
 5. **Application**: Copies the correct configuration to `/usr/share/nvidia/vgpu/vgpuConfig.xml`
-6. **Reboot Required**: System must be rebooted for changes to take effect
+6. **vgpu_unlock Configuration**: Creates `/etc/vgpu_unlock/config.toml` with `unlock = false` for P4 cards
+7. **IOMMU Configuration**: Removes problematic `iommu=pt` parameter from GRUB
+8. **Reboot Required**: System must be rebooted for changes to take effect
+
+## Tesla P4 Specific Requirements
+
+### vgpu_unlock Configuration
+Tesla P4 cards require specific vgpu_unlock-rs configuration:
+
+- **unlock = false**: Tesla P4 cards must have `unlock = false` in `/etc/vgpu_unlock/config.toml`
+- **Driver Patching**: The driver must be patched on the host system
+- **Automatic Configuration**: The installer automatically creates the correct config.toml
+
+### IOMMU Configuration  
+Tesla P4 cards work better without the `iommu=pt` parameter:
+
+- **Removed iommu=pt**: The installer removes `iommu=pt` which can cause unexpected behavior
+- **Proper IOMMU**: Uses only `amd_iommu=on` or `intel_iommu=on` as appropriate
+- **Better Stability**: Eliminates potential IOMMU-related issues with P4 cards
 
 ## Enhanced Error Handling
 
@@ -222,6 +240,32 @@ systemctl status nvidia-vgpud.service
 
 # Verify configuration file exists
 ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml
+
+# Check vgpu_unlock configuration (Tesla P4 specific)
+ls -la /etc/vgpu_unlock/config.toml
+grep "unlock" /etc/vgpu_unlock/config.toml
+
+# Should show: unlock = false (for Tesla P4)
+
+# Verify GRUB configuration
+grep "GRUB_CMDLINE_LINUX_DEFAULT" /etc/default/grub
+
+# Should NOT contain iommu=pt (removed for Tesla P4 compatibility)
+```
+
+### Comprehensive Validation
+Use the validation script for complete verification:
+
+```bash
+# Run Tesla P4 specific validation
+./validate_tesla_p4.sh
+
+# This checks:
+# - Tesla P4 hardware detection
+# - NVIDIA services status  
+# - vgpuConfig.xml configuration
+# - vgpu_unlock config.toml settings
+# - Available vGPU profiles
 ```
 
 ## Troubleshooting
@@ -237,6 +281,41 @@ ls -la /usr/share/nvidia/vgpu/vgpuConfig.xml
 2. Check if `megatools` is installed: `which megadl`
 3. Check internet connectivity for driver download
 4. Look for error messages in installation log
+
+### vgpu_unlock Configuration Issues
+If Tesla P4 is still showing P40 profiles, check vgpu_unlock configuration:
+
+1. **Verify config.toml exists**: `ls -la /etc/vgpu_unlock/config.toml`
+2. **Check unlock setting**: `grep "unlock" /etc/vgpu_unlock/config.toml`
+   - Should show: `unlock = false` for Tesla P4 cards
+3. **Manual fix if needed**:
+   ```bash
+   # Edit the configuration file
+   sudo nano /etc/vgpu_unlock/config.toml
+   
+   # Ensure it contains:
+   [general]
+   unlock = false
+   ```
+4. **Regenerate configuration**: Run `./proxmox-installer.sh` to recreate config files
+5. **Restart services**: 
+   ```bash
+   systemctl restart nvidia-vgpud nvidia-vgpu-mgr
+   sleep 30
+   mdevctl types
+   ```
+
+### IOMMU Issues
+If experiencing unexpected behavior, check GRUB configuration:
+
+1. **Check for problematic settings**: `grep "iommu=pt" /etc/default/grub`
+2. **Remove if present**:
+   ```bash
+   sudo sed -i 's/ iommu=pt//g' /etc/default/grub
+   sudo update-grub
+   ```
+3. **Verify correct IOMMU settings**: Should only have `amd_iommu=on` or `intel_iommu=on`
+4. **Reboot required**: Changes require system reboot to take effect
 
 ### Manual Fix Application
 If the automatic fix fails, you can apply it manually:

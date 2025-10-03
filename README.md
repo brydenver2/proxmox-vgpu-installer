@@ -76,6 +76,12 @@ Changes in version 1.3 (PoloLoco Guide Integration)
 - **Multiple GPU Support**: Add multiple Pascal cards to a single VM with proper ROM spoofing
 - **Community Guidelines**: Follows PoloLoco's recommendations for Pascal card usage
 
+### Tesla P4 Specific Improvements
+- **vgpu_unlock Configuration**: Automatically creates config.toml with `unlock = false` for P4 cards
+- **IOMMU Optimization**: Removes problematic `iommu=pt` parameter for better P4 stability
+- **Profile Detection**: Enhanced validation script specifically for Tesla P4 profile verification
+- **Troubleshooting**: Comprehensive Tesla P4 troubleshooting guidance and validation tools
+
 ### vGPU Override Features
 - **Profile Configuration**: Configure display settings (resolution, displays, max_pixels)
 - **VRAM Allocation**: Set custom framebuffer and framebuffer_reservation values
