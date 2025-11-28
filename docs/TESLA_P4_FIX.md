@@ -6,25 +6,37 @@ This document explains the Tesla P4 fix that has been integrated into the Proxmo
 
 Tesla P4 cards have an issue where `nvidia-vgpu-mgr.service` loads incorrect mdevctl types:
 
+- **Driver 17.4 (550.127.06)**: Shows P40 profiles instead of P4 profiles
+- **Driver 18.4 (570.172.07)**: Shows no vGPU profiles at all
 - **Driver 16.1 (535.104.06)**: Shows P40 profiles instead of P4 profiles
 - **Driver 16.9 (535.230.02)**: Shows P40 profiles instead of P4 profiles
 - **Driver 17.0 (550.54.10)**: Shows no vGPU profiles at all
 
+This happens because NVIDIA dropped Pascal support in v17.x+ drivers, and the vgpuConfig.xml file in newer drivers doesn't contain Tesla P4 profile definitions.
+
 ## Solution
 
-The installer now automatically detects GPU type and applies appropriate configuration:
+The installer now implements a two-step fix per PoloLoco's guide:
 
-1. **GPU Detection**: Automatically detects GPU type and determines vGPU support level
-2. **Network Check**: Verifies internet connectivity before attempting downloads
-3. **Primary Download**: Downloads NVIDIA driver with retry logic
-4. **Local Check**: Checks for existing local driver files if download fails
-5. **Application**: Copies the correct configuration to `/usr/share/nvidia/vgpu/vgpuConfig.xml`
-6. **vgpu_unlock Configuration**: Creates `/etc/vgpu_unlock/config.toml` with appropriate settings:
-   - `unlock = false` for native vGPU cards (Tesla V100, P100, M60, GRID cards, etc.)
-   - `unlock = false` for Tesla P4 (special case)
-   - `unlock = true` for consumer cards (GTX, RTX series)
-7. **IOMMU Configuration**: Prompts user to choose whether to include `iommu=pt` parameter
-8. **Reboot Required**: System must be rebooted for changes to take effect
+### Step 1: Apply PoloLoco's Driver Patch
+During driver installation, the driver must be patched with PoloLoco's vgpu-proxmox patches:
+```bash
+./NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run --apply-patch ~/vgpu-proxmox/550.144.02.patch
+```
+
+### Step 2: Replace vgpuConfig.xml with v16.4 Version
+After driver installation, the vgpuConfig.xml file must be overwritten with the v16.4 driver's XML file, which contains the correct Tesla P4 profile definitions:
+```bash
+cp /path/to/v16.4/vgpuConfig.xml /usr/share/nvidia/vgpu/vgpuConfig.xml
+```
+
+The installer automatically:
+1. **Downloads vgpu-proxmox patches** from PoloLoco's GitLab repository
+2. **Patches the driver** using the appropriate patch file
+3. **Installs the patched driver**
+4. **Downloads and extracts v16.4 driver** (535.161.05-vgpu-kvm.run)
+5. **Replaces vgpuConfig.xml** with the v16.4 version containing Pascal profiles
+6. **Verifies** that Tesla P4 device ID (1BB3) is present in the config
 
 ## GPU-Specific Requirements
 

@@ -183,29 +183,34 @@ display_pascal_psa() {
 }
 
 # Function to apply Pascal vGPU configuration fix following PoloLoco's guide
+# This function replaces the vgpuConfig.xml with the v16.4 driver's XML file
+# which contains the correct Tesla P4 and other Pascal profile definitions
 apply_pascal_vgpu_fix() {
     local driver_version="$1"
     
-    # Check if we have Pascal GPU and are using v17.x driver
+    # Check if we have Pascal GPU and are using v17.x+ driver
     if detect_pascal_gpu; then
         # Display PSA for Pascal GPUs following PoloLoco's recommendations
         display_pascal_psa
         
         echo -e "${YELLOW}[-]${NC} Pascal GPU detected with driver v$driver_version"
         
-        # Check if we're using v16.8 or newer driver
+        # Check if we're using v16.8 or newer driver (v17.x, v18.x, v19.x)
+        # These drivers require the v16.4 vgpuConfig.xml to be installed for Pascal support
         if [[ "$driver_version" =~ ^16\.([89]|1[01])$|^17\.|^18\.|^19\. ]]; then
-            echo -e "${YELLOW}[-]${NC} Following PoloLoco's guide: Pascal cards with v16.8+ drivers need v16.5 vgpuConfig.xml"
-            echo -e "${YELLOW}[-]${NC} This is required because newer drivers need compatible Pascal configuration"
+            echo -e "${YELLOW}[-]${NC} Following PoloLoco's guide: Pascal cards with v17.x+ drivers need v16.4 vgpuConfig.xml"
+            echo -e "${YELLOW}[-]${NC} This is REQUIRED because newer drivers dropped Pascal support"
+            echo -e "${GREEN}[+]${NC} The vgpuConfig.xml file contains Tesla P4, P40, and other Pascal profile definitions"
             
-            # Define v16.5 driver details
-            local v165_driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
-            local v165_driver_md5="bad6e09aeb58942750479f091bb9c4b6"
+            # Define v16.4 driver details (535.161.05 is the v16.4/v16.5 driver)
+            local v164_driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run"
+            local v164_driver_md5="bad6e09aeb58942750479f091bb9c4b6"
             
-            # Prompt user for v16.5 driver download URL
-            echo -e "${YELLOW}[-]${NC} For Pascal GPU compatibility, you need driver v16.5 for its vgpuConfig.xml"
+            # Prompt user for v16.4 driver download URL
+            echo -e "${YELLOW}[-]${NC} For Pascal GPU compatibility, you need driver v16.4 for its vgpuConfig.xml"
+            echo -e "${YELLOW}[-]${NC} This XML file defines the Tesla P4/P40 vGPU profiles"
             local driver_url
-            driver_url=$(prompt_for_driver_url "$v165_driver_filename" "16.5")
+            driver_url=$(prompt_for_driver_url "$v164_driver_filename" "16.4")
             
             # Create temporary directory for Pascal fix
             local temp_dir="/tmp/pascal_fix"
@@ -216,26 +221,26 @@ apply_pascal_vgpu_fix() {
                 return 1
             }
             
-            # Download v16.5 driver from user-provided URL
-            if ! download_driver_from_url "$v165_driver_filename" "$driver_url" "$v165_driver_md5"; then
-                echo -e "${RED}[!]${NC} Failed to download v16.5 driver for Pascal compatibility"
+            # Download v16.4 driver from user-provided URL
+            if ! download_driver_from_url "$v164_driver_filename" "$driver_url" "$v164_driver_md5"; then
+                echo -e "${RED}[!]${NC} Failed to download v16.4 driver for Pascal compatibility"
                 cd "$original_dir" || true
                 return 1
             fi
             
             # Extract the driver to get vgpuConfig.xml
-            echo -e "${YELLOW}[-]${NC} Extracting v16.5 driver for vgpuConfig.xml"
-            chmod +x "$v165_driver_filename"
-            if ! timeout 60 ./"$v165_driver_filename" -x >/dev/null 2>&1; then
-                echo -e "${RED}[!]${NC} Failed to extract v16.5 driver"
+            echo -e "${YELLOW}[-]${NC} Extracting v16.4 driver for vgpuConfig.xml"
+            chmod +x "$v164_driver_filename"
+            if ! timeout 60 ./"$v164_driver_filename" -x >/dev/null 2>&1; then
+                echo -e "${RED}[!]${NC} Failed to extract v16.4 driver"
                 cd "$original_dir" || true
                 return 1
             fi
             
             # Check if vgpuConfig.xml was extracted
-            local extracted_dir="${v165_driver_filename%.run}"
+            local extracted_dir="${v164_driver_filename%.run}"
             if [ ! -f "$extracted_dir/vgpuConfig.xml" ]; then
-                echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted v16.5 driver"
+                echo -e "${RED}[!]${NC} vgpuConfig.xml not found in extracted v16.4 driver"
                 cd "$original_dir" || true
                 return 1
             fi
@@ -256,22 +261,23 @@ apply_pascal_vgpu_fix() {
                 cp "/usr/share/nvidia/vgpu/vgpuConfig.xml" "$backup_file" 2>/dev/null || true
             fi
             
-            # Copy v16.5 configuration for Pascal compatibility
-            echo -e "${GREEN}[+]${NC} Installing v16.5 vgpuConfig.xml for Pascal compatibility"
+            # Copy v16.4 configuration for Pascal compatibility - THIS IS THE CRITICAL STEP
+            echo -e "${GREEN}[+]${NC} Overwriting vgpuConfig.xml with v16.4 driver's XML (contains Pascal profiles)"
             
             if cp "$extracted_dir/vgpuConfig.xml" "/usr/share/nvidia/vgpu/vgpuConfig.xml"; then
-                echo -e "${GREEN}[+]${NC} File copied successfully"
+                echo -e "${GREEN}[+]${NC} vgpuConfig.xml successfully replaced with v16.4 version"
                 
                 # Set proper permissions
                 chmod 644 "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || true
                 chown root:root "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null || true
                 
-                # Verify the copied configuration contains Pascal data
-                if grep -q "1BB3\|1bb3\|1B38\|1b38" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
-                    echo -e "${GREEN}[+]${NC} Pascal vGPU configuration applied successfully"
-                    echo -e "${GREEN}[+]${NC} Configuration contains Pascal device IDs"
-                else
-                    echo -e "${YELLOW}[-]${NC} Warning: Configuration file may not contain Pascal specific data"
+                # Verify the copied configuration contains Pascal device IDs
+                # Tesla P4 = 1BB3, Tesla P40 = 1B38
+                if grep -q "1BB3\|1bb3" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} Verified: Configuration contains Tesla P4 device ID (1BB3)"
+                fi
+                if grep -q "1B38\|1b38" "/usr/share/nvidia/vgpu/vgpuConfig.xml" 2>/dev/null; then
+                    echo -e "${GREEN}[+]${NC} Verified: Configuration contains Tesla P40 device ID (1B38)"
                 fi
                 
                 # Clean up temporary files
@@ -279,12 +285,15 @@ apply_pascal_vgpu_fix() {
                 rm -rf "$temp_dir" 2>/dev/null || true
                 
                 echo -e "${GREEN}[+]${NC} Pascal vGPU configuration fix completed (PoloLoco guide)"
+                echo -e "${GREEN}[+]${NC} Summary of changes:"
+                echo -e "${GREEN}[+]${NC}   1. Driver was patched with PoloLoco's vgpu-proxmox patch"
+                echo -e "${GREEN}[+]${NC}   2. vgpuConfig.xml was replaced with v16.4 version (contains Pascal profiles)"
                 echo -e "${YELLOW}[-]${NC} ${RED}REBOOT REQUIRED:${NC} System must be rebooted for changes to take effect"
-                echo -e "${YELLOW}[-]${NC} After reboot, Pascal GPUs should show proper vGPU profiles"
-                echo -e "${YELLOW}[-]${NC} Verify with: mdevctl types"
+                echo -e "${YELLOW}[-]${NC} After reboot, run 'mdevctl types' to verify Pascal profiles are available"
+                echo -e "${YELLOW}[-]${NC} Tesla P4 should show GRID P4-* profiles (not P40 profiles)"
                 
             else
-                echo -e "${RED}[!]${NC} Failed to copy v16.5 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
+                echo -e "${RED}[!]${NC} Failed to copy v16.4 vgpuConfig.xml to /usr/share/nvidia/vgpu/"
                 echo -e "${RED}[!]${NC} Pascal vGPU fix could not be applied"
                 cd "$original_dir" || true
                 return 1
@@ -2414,6 +2423,14 @@ case $STEP in
 
                 elif [ "$VGPU_SUPPORT" = "Native" ]; then
                     # Execute steps for "Native" VGPU_SUPPORT
+                    # For Pascal GPUs with "Native" support, we may still need patches for v17.x+ drivers
+                    # Download vgpu-proxmox patches proactively in case user selects v17.x+ driver in Step 2
+                    if detect_pascal_gpu; then
+                        echo -e "${YELLOW}[-]${NC} Pascal GPU detected with Native support - downloading patches for potential v17.x+ driver usage"
+                        rm -rf $VGPU_DIR/vgpu-proxmox 2>/dev/null 
+                        run_command "Downloading vgpu-proxmox from PoloLoco's official repository" "info" "git clone https://gitlab.com/polloloco/vgpu-proxmox.git $VGPU_DIR/vgpu-proxmox"
+                        write_log "NATIVE + Pascal GPU: Downloaded vgpu-proxmox patches for potential v17.x+ driver usage"
+                    fi
                     update_grub
                 fi
             # Removing previous installations of vgpu
@@ -2434,6 +2451,14 @@ case $STEP in
                 run_command "Removing previous vgpu_unlock-rs" "notification" "rm -rf /opt/vgpu_unlock-rs/ 2>/dev/null"
                 # Removing vgpu-proxmox
                 run_command "Removing vgpu-proxmox" "notification" "rm -rf $VGPU_DIR/vgpu-proxmox 2>/dev/null"
+                
+                # Re-download vgpu-proxmox for upgrades if patching is needed (Pascal GPUs or VGPU_SUPPORT=Yes)
+                # This ensures patches are available for Step 2 driver installation
+                if [ "$VGPU_SUPPORT" = "Yes" ] || detect_pascal_gpu; then
+                    echo -e "${YELLOW}[-]${NC} Re-downloading vgpu-proxmox patches for upgrade..."
+                    run_command "Downloading vgpu-proxmox from PoloLoco's official repository" "info" "git clone https://gitlab.com/polloloco/vgpu-proxmox.git $VGPU_DIR/vgpu-proxmox"
+                    write_log "UPGRADE: Downloaded vgpu-proxmox patches for Pascal GPU or VGPU_SUPPORT=Yes"
+                fi
             fi
 
             # Check if the specified lines are present in /etc/modules
@@ -3062,58 +3087,69 @@ case $STEP in
                 echo -e "${YELLOW}[-]${NC} Installing original vGPU driver (this may take several minutes)..."
                 log_system_info "kernel"  # Log kernel state before installation
                 run_command "Installing original driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
-            # Check if patch file exists first
-            elif [ -f "$VGPU_DIR/vgpu-proxmox/$driver_patch" ]; then
-                echo -e "${YELLOW}[-]${NC} Patch file found, applying vGPU patch to driver..."
-                write_log "Patch file found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
-                
-                # Add custom to original filename
-                custom_filename="${driver_filename%.run}-custom.run"
-
-                # Check if $custom_filename exists
-                if [ -e "$custom_filename" ]; then
-                    mv "$custom_filename" "$custom_filename.bak"
-                    echo -e "${YELLOW}[-]${NC} Moved $custom_filename to $custom_filename.bak"
-                    write_log "Moved existing custom driver: $custom_filename to backup"
-                fi
-
-                if [ "$VERBOSE" = "true" ]; then
-                    echo -e "${GRAY}[DEBUG] Patch file: $VGPU_DIR/vgpu-proxmox/$driver_patch${NC}"
-                    echo -e "${GRAY}[DEBUG] Applying patch to create: $custom_filename${NC}"
+            else
+                # Ensure vgpu-proxmox patches are available - download if missing
+                # This is critical for Pascal GPUs with v17.x+ drivers per PoloLoco's guide
+                if [ ! -d "$VGPU_DIR/vgpu-proxmox" ]; then
+                    echo -e "${YELLOW}[-]${NC} vgpu-proxmox patches not found - downloading from PoloLoco's repository..."
+                    write_log "vgpu-proxmox directory missing in Step 2 - downloading patches"
+                    run_command "Downloading vgpu-proxmox from PoloLoco's official repository" "info" "git clone https://gitlab.com/polloloco/vgpu-proxmox.git $VGPU_DIR/vgpu-proxmox"
                 fi
                 
-                # Apply the patch
-                run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch" true true
-                
-                if [ -f "$custom_filename" ]; then
-                    echo -e "${GREEN}[+]${NC} Patched driver created successfully: $custom_filename"
-                    write_log "Patched driver created: $custom_filename"
+                # Check if patch file exists
+                if [ -f "$VGPU_DIR/vgpu-proxmox/$driver_patch" ]; then
+                    echo -e "${YELLOW}[-]${NC} Patch file found, applying vGPU patch to driver..."
+                    write_log "Patch file found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
                     
+                    # Add custom to original filename
+                    custom_filename="${driver_filename%.run}-custom.run"
+
+                    # Check if $custom_filename exists
+                    if [ -e "$custom_filename" ]; then
+                        mv "$custom_filename" "$custom_filename.bak"
+                        echo -e "${YELLOW}[-]${NC} Moved $custom_filename to $custom_filename.bak"
+                        write_log "Moved existing custom driver: $custom_filename to backup"
+                    fi
+
                     if [ "$VERBOSE" = "true" ]; then
-                        echo -e "${GRAY}[DEBUG] Patched driver size: $(du -h $custom_filename | cut -f1)${NC}"
+                        echo -e "${GRAY}[DEBUG] Patch file: $VGPU_DIR/vgpu-proxmox/$driver_patch${NC}"
+                        echo -e "${GRAY}[DEBUG] Applying patch to create: $custom_filename${NC}"
                     fi
                     
-                    # Run the patched driver installer
-                    echo -e "${YELLOW}[-]${NC} Installing patched vGPU driver (this may take several minutes)..."
-                    log_system_info "kernel"  # Log kernel state before installation
-                    run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s" true true
+                    # Apply the patch using PoloLoco's method
+                    echo -e "${GREEN}[+]${NC} Applying PoloLoco's vGPU patch: ./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch"
+                    run_command "Patching driver" "info" "./$driver_filename --apply-patch $VGPU_DIR/vgpu-proxmox/$driver_patch" true true
+                    
+                    if [ -f "$custom_filename" ]; then
+                        echo -e "${GREEN}[+]${NC} Patched driver created successfully: $custom_filename"
+                        write_log "Patched driver created: $custom_filename"
+                        
+                        if [ "$VERBOSE" = "true" ]; then
+                            echo -e "${GRAY}[DEBUG] Patched driver size: $(du -h $custom_filename | cut -f1)${NC}"
+                        fi
+                        
+                        # Run the patched driver installer
+                        echo -e "${YELLOW}[-]${NC} Installing patched vGPU driver (this may take several minutes)..."
+                        log_system_info "kernel"  # Log kernel state before installation
+                        run_command "Installing patched driver" "info" "./$custom_filename --dkms -m=kernel -s" true true
+                    else
+                        echo -e "${RED}[!]${NC} Failed to create patched driver"
+                        write_log "ERROR: Patched driver not created"
+                        exit 1
+                    fi
                 else
-                    echo -e "${RED}[!]${NC} Failed to create patched driver"
-                    write_log "ERROR: Patched driver not created"
-                    exit 1
+                    # No patch file available - continue with original driver
+                    echo -e "${YELLOW}[-]${NC} No patch file found for this driver version: $driver_patch"
+                    echo -e "${YELLOW}[-]${NC} This driver may not require patching or patch is not available"
+                    echo -e "${YELLOW}[-]${NC} Continuing with original driver installation..."
+                    write_log "WARNING: No patch file found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
+                    write_log "Continuing with original driver installation"
+                    
+                    # Run the regular driver installer for non-native GPU without patch
+                    echo -e "${YELLOW}[-]${NC} Installing original vGPU driver (this may take several minutes)..."
+                    log_system_info "kernel"  # Log kernel state before installation
+                    run_command "Installing original driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
                 fi
-            else
-                # No patch file available - continue with original driver
-                echo -e "${YELLOW}[-]${NC} No patch file found for this driver version: $driver_patch"
-                echo -e "${YELLOW}[-]${NC} This driver may not require patching or patch is not available"
-                echo -e "${YELLOW}[-]${NC} Continuing with original driver installation..."
-                write_log "WARNING: No patch file found: $VGPU_DIR/vgpu-proxmox/$driver_patch"
-                write_log "Continuing with original driver installation"
-                
-                # Run the regular driver installer for non-native GPU without patch
-                echo -e "${YELLOW}[-]${NC} Installing original vGPU driver (this may take several minutes)..."
-                log_system_info "kernel"  # Log kernel state before installation
-                run_command "Installing original driver" "info" "./$driver_filename --dkms -m=kernel -s" true true
             fi
             
         elif [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Native" ] || [ "$VGPU_SUPPORT" = "Unknown" ]; then
