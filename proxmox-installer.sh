@@ -1232,7 +1232,7 @@ configure_existing_vm() {
         fi
         
         # Apply the configuration
-        if qm set "$vm_id" "$hostpci_param=$hostpci_config"; then
+        if qm set "$vm_id" --"$hostpci_param" "$hostpci_config"; then
             echo -e "${GREEN}[+]${NC} Successfully configured VM $vm_id with Pascal ROM spoofing"
             echo -e "${GREEN}[+]${NC} Added $hostpci_param: $hostpci_config"
             
