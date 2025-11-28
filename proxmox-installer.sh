@@ -361,6 +361,7 @@ download_driver_from_url() {
     local expected_md5="$3"
     
     echo -e "${YELLOW}[-]${NC} Downloading $driver_filename from provided URL..."
+    echo -e "${YELLOW}[-]${NC} URL: $driver_url"
     
     # Check if file already exists
     if [ -e "$driver_filename" ]; then
@@ -370,32 +371,57 @@ download_driver_from_url() {
     
     # Try different download methods
     local download_success=false
+    local download_error=""
     
     # Try with wget first
     if command -v wget >/dev/null 2>&1; then
         echo -e "${YELLOW}[-]${NC} Attempting download with wget..."
-        if timeout 600 wget -q --tries=3 --timeout=60 "$driver_url" -O "$driver_filename" 2>/dev/null; then
+        echo -e "${YELLOW}[-]${NC} This may take several minutes for large driver files..."
+        # Use --progress=bar:force to show progress, --connect-timeout for initial connection,
+        # --read-timeout for stalled downloads, and remove -q to see output
+        if wget --progress=bar:force --tries=3 --connect-timeout=30 --read-timeout=300 "$driver_url" -O "$driver_filename" 2>&1; then
             if [ -f "$driver_filename" ] && [ -s "$driver_filename" ]; then
                 download_success=true
                 echo -e "${GREEN}[+]${NC} Successfully downloaded using wget"
+            else
+                download_error="wget completed but file is empty or missing"
             fi
+        else
+            download_error="wget failed with exit code $?"
+            # Clean up partial downloads
+            rm -f "$driver_filename" 2>/dev/null
         fi
     fi
     
     # Try with curl if wget failed
     if [ "$download_success" = false ] && command -v curl >/dev/null 2>&1; then
         echo -e "${YELLOW}[-]${NC} Attempting download with curl..."
-        if timeout 600 curl -L --retry 3 --max-time 60 --silent "$driver_url" -o "$driver_filename" 2>/dev/null; then
+        echo -e "${YELLOW}[-]${NC} This may take several minutes for large driver files..."
+        # Use --progress-bar to show progress, --connect-timeout for initial connection,
+        # --retry-delay between retries, -f to fail on HTTP errors, and show errors
+        if curl --progress-bar -f -L --retry 3 --retry-delay 5 --connect-timeout 30 "$driver_url" -o "$driver_filename" 2>&1; then
             if [ -f "$driver_filename" ] && [ -s "$driver_filename" ]; then
                 download_success=true
                 echo -e "${GREEN}[+]${NC} Successfully downloaded using curl"
+            else
+                download_error="curl completed but file is empty or missing"
             fi
+        else
+            download_error="curl failed with exit code $?"
+            # Clean up partial downloads
+            rm -f "$driver_filename" 2>/dev/null
         fi
     fi
     
     if [ "$download_success" = false ]; then
         echo -e "${RED}[!]${NC} Failed to download driver from provided URL"
-        echo -e "${YELLOW}[-]${NC} Please verify the URL is correct and accessible"
+        if [ -n "$download_error" ]; then
+            echo -e "${RED}[!]${NC} Error: $download_error"
+        fi
+        echo -e "${YELLOW}[-]${NC} Please verify:"
+        echo -e "${YELLOW}[-]${NC}   • The URL is correct and accessible"
+        echo -e "${YELLOW}[-]${NC}   • Your internet connection is working"
+        echo -e "${YELLOW}[-]${NC}   • The server is not blocking your request"
         echo -e "${YELLOW}[-]${NC} Note: Mega.nz URLs are not supported - please use direct HTTP/HTTPS URLs"
         return 1
     fi
