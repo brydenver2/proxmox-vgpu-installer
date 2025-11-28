@@ -680,7 +680,7 @@ major_version=$(echo "$version" | sed 's/\([0-9]*\).*/\1/')
 # Function to map filename to driver version and patch
 map_filename_to_version() {
     local filename="$1"
-    if [[ "$filename" =~ ^(NVIDIA-Linux-x86_64-535\.54\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.104\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.129\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.183\.04-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.216\.01-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.230\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.247\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.261\.04-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.10-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.16-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.90\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.127\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.144\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.163\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.124\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.133\.10-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.148\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.158\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.172\.07-vgpu-kvm\.run|NVIDIA-Linux-x86_64-580\.65\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-580\.82\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-580\.95\.02-vgpu-kvm\.run)$ ]]; then
+    if [[ "$filename" =~ ^(NVIDIA-Linux-x86_64-535\.54\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.104\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.129\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.161\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.183\.04-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.216\.01-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.230\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.247\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-535\.261\.04-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.10-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.54\.16-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.90\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.127\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.144\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.163\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-550\.163\.10-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.124\.03-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.133\.10-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.148\.06-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.158\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-570\.172\.07-vgpu-kvm\.run|NVIDIA-Linux-x86_64-580\.65\.05-vgpu-kvm\.run|NVIDIA-Linux-x86_64-580\.82\.02-vgpu-kvm\.run|NVIDIA-Linux-x86_64-580\.95\.02-vgpu-kvm\.run)$ ]]; then
         case "$filename" in
             NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run)
                 driver_version="16.0"
@@ -759,8 +759,13 @@ map_filename_to_version() {
                 ;;
             NVIDIA-Linux-x86_64-550.163.02-vgpu-kvm.run)
                 driver_version="17.6"
-                driver_patch="550.163.10.patch"
+                driver_patch="550.163.02.patch"
                 md5="093036d83baf879a4bb667b484597789"
+                ;;
+            NVIDIA-Linux-x86_64-550.163.10-vgpu-kvm.run)
+                driver_version="17.6"
+                driver_patch="550.163.02.patch"
+                md5=""
                 ;;
             NVIDIA-Linux-x86_64-570.124.03-vgpu-kvm.run)
                 driver_version="18.0"
@@ -2554,22 +2559,23 @@ case $STEP in
             echo "6: 18.2 (570.148.06)"
             echo "7: 18.1 (570.133.10) (Only Native supported GPU)"
             echo "8: 18.0 (570.124.03)"
-            echo "9: 17.6 (550.163.10) (Only Native supported GPU)"
-            echo "10: 17.5 (550.144.02)"
-            echo "11: 17.4 (550.127.06)"
-            echo "12: 17.3 (550.90.05)"
-            echo "13: 17.1 (550.54.16)"
-            echo "14: 17.0 (550.54.10)"
-            echo "15: 16.11 (535.261.04) (No patch available)"
-            echo "16: 16.10 (535.247.02) (No patch available)"
-            echo "17: 16.9 (535.230.02)"
-            echo "18: 16.8 (535.216.01)"
-            echo "19: 16.7 (535.183.04)"
-            echo "20: 16.5 (535.161.05)"
-            echo "21: 16.4 (535.161.05)"
-            echo "22: 16.2 (535.129.03)"
-            echo "23: 16.1 (535.104.06)"
-            echo "24: 16.0 (535.54.06)"
+            echo "9: 17.6 (550.163.02)"
+            echo "10: 17.6 (550.163.10) - newer hotfix version"
+            echo "11: 17.5 (550.144.02)"
+            echo "12: 17.4 (550.127.06)"
+            echo "13: 17.3 (550.90.05)"
+            echo "14: 17.1 (550.54.16)"
+            echo "15: 17.0 (550.54.10)"
+            echo "16: 16.11 (535.261.04) (No patch available)"
+            echo "17: 16.10 (535.247.02) (No patch available)"
+            echo "18: 16.9 (535.230.02)"
+            echo "19: 16.8 (535.216.01)"
+            echo "20: 16.7 (535.183.04)"
+            echo "21: 16.5 (535.161.05)"
+            echo "22: 16.4 (535.161.05)"
+            echo "23: 16.2 (535.129.03)"
+            echo "24: 16.1 (535.104.06)"
+            echo "25: 16.0 (535.54.06)"
             echo ""
 
             read -p "Enter your choice: " driver_choice
@@ -2584,22 +2590,23 @@ case $STEP in
                 6) driver_filename="NVIDIA-Linux-x86_64-570.148.06-vgpu-kvm.run" ;;
                 7) driver_filename="NVIDIA-Linux-x86_64-570.133.10-vgpu-kvm.run" ;;
                 8) driver_filename="NVIDIA-Linux-x86_64-570.124.03-vgpu-kvm.run" ;;
-                9) driver_filename="NVIDIA-Linux-x86_64-550.163.10-vgpu-kvm.run" ;;
-                10) driver_filename="NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run" ;;
-                11) driver_filename="NVIDIA-Linux-x86_64-550.127.06-vgpu-kvm.run" ;;
-                12) driver_filename="NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm.run" ;;
-                13) driver_filename="NVIDIA-Linux-x86_64-550.54.16-vgpu-kvm.run" ;;
-                14) driver_filename="NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run" ;;
-                15) driver_filename="NVIDIA-Linux-x86_64-535.261.04-vgpu-kvm.run" ;;
-                16) driver_filename="NVIDIA-Linux-x86_64-535.247.02-vgpu-kvm.run" ;;
-                17) driver_filename="NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run" ;;
-                18) driver_filename="NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run" ;;
-                19) driver_filename="NVIDIA-Linux-x86_64-535.183.04-vgpu-kvm.run" ;;
-                20) driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run" ;;
+                9) driver_filename="NVIDIA-Linux-x86_64-550.163.02-vgpu-kvm.run" ;;
+                10) driver_filename="NVIDIA-Linux-x86_64-550.163.10-vgpu-kvm.run" ;;
+                11) driver_filename="NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run" ;;
+                12) driver_filename="NVIDIA-Linux-x86_64-550.127.06-vgpu-kvm.run" ;;
+                13) driver_filename="NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm.run" ;;
+                14) driver_filename="NVIDIA-Linux-x86_64-550.54.16-vgpu-kvm.run" ;;
+                15) driver_filename="NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run" ;;
+                16) driver_filename="NVIDIA-Linux-x86_64-535.261.04-vgpu-kvm.run" ;;
+                17) driver_filename="NVIDIA-Linux-x86_64-535.247.02-vgpu-kvm.run" ;;
+                18) driver_filename="NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run" ;;
+                19) driver_filename="NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run" ;;
+                20) driver_filename="NVIDIA-Linux-x86_64-535.183.04-vgpu-kvm.run" ;;
                 21) driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run" ;;
-                22) driver_filename="NVIDIA-Linux-x86_64-535.129.03-vgpu-kvm.run" ;;
-                23) driver_filename="NVIDIA-Linux-x86_64-535.104.06-vgpu-kvm.run" ;;
-                24) driver_filename="NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run" ;;
+                22) driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run" ;;
+                23) driver_filename="NVIDIA-Linux-x86_64-535.129.03-vgpu-kvm.run" ;;
+                24) driver_filename="NVIDIA-Linux-x86_64-535.104.06-vgpu-kvm.run" ;;
+                25) driver_filename="NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run" ;;
                 *) 
                     echo "Invalid choice. Please enter a valid option."
                     exit 1
@@ -2822,22 +2829,23 @@ case $STEP in
             echo "6: 18.2 (570.148.06)"
             echo "7: 18.1 (570.133.10) (Only Native supported GPU)"
             echo "8: 18.0 (570.124.03)"
-            echo "9: 17.6 (550.163.10) (Only Native supported GPU)"
-            echo "10: 17.5 (550.144.02)"
-            echo "11: 17.4 (550.127.06)"
-            echo "12: 17.3 (550.90.05)"
-            echo "13: 17.1 (550.54.16)"
-            echo "14: 17.0 (550.54.10)"
-            echo "15: 16.11 (535.261.04) (No patch available)"
-            echo "16: 16.10 (535.247.02) (No patch available)"
-            echo "17: 16.9 (535.230.02)"
-            echo "18: 16.8 (535.216.01)"
-            echo "19: 16.7 (535.183.04)"
-            echo "20: 16.5 (535.161.05)"
-            echo "21: 16.4 (535.161.05)"
-            echo "22: 16.2 (535.129.03)"
-            echo "23: 16.1 (535.104.06)"
-            echo "24: 16.0 (535.54.06)"
+            echo "9: 17.6 (550.163.02)"
+            echo "10: 17.6 (550.163.10) - newer hotfix version"
+            echo "11: 17.5 (550.144.02)"
+            echo "12: 17.4 (550.127.06)"
+            echo "13: 17.3 (550.90.05)"
+            echo "14: 17.1 (550.54.16)"
+            echo "15: 17.0 (550.54.10)"
+            echo "16: 16.11 (535.261.04) (No patch available)"
+            echo "17: 16.10 (535.247.02) (No patch available)"
+            echo "18: 16.9 (535.230.02)"
+            echo "19: 16.8 (535.216.01)"
+            echo "20: 16.7 (535.183.04)"
+            echo "21: 16.5 (535.161.05)"
+            echo "22: 16.4 (535.161.05)"
+            echo "23: 16.2 (535.129.03)"
+            echo "24: 16.1 (535.104.06)"
+            echo "25: 16.0 (535.54.06)"
             echo ""
 
             read -p "Enter your choice: " driver_choice
@@ -2854,22 +2862,23 @@ case $STEP in
                 6) driver_filename="NVIDIA-Linux-x86_64-570.148.06-vgpu-kvm.run" ;;
                 7) driver_filename="NVIDIA-Linux-x86_64-570.133.10-vgpu-kvm.run" ;;
                 8) driver_filename="NVIDIA-Linux-x86_64-570.124.03-vgpu-kvm.run" ;;
-                9) driver_filename="NVIDIA-Linux-x86_64-550.163.10-vgpu-kvm.run" ;;
-                10) driver_filename="NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run" ;;
-                11) driver_filename="NVIDIA-Linux-x86_64-550.127.06-vgpu-kvm.run" ;;
-                12) driver_filename="NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm.run" ;;
-                13) driver_filename="NVIDIA-Linux-x86_64-550.54.16-vgpu-kvm.run" ;;
-                14) driver_filename="NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run" ;;
-                15) driver_filename="NVIDIA-Linux-x86_64-535.261.04-vgpu-kvm.run" ;;
-                16) driver_filename="NVIDIA-Linux-x86_64-535.247.02-vgpu-kvm.run" ;;
-                17) driver_filename="NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run" ;;
-                18) driver_filename="NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run" ;;
-                19) driver_filename="NVIDIA-Linux-x86_64-535.183.04-vgpu-kvm.run" ;;
-                20) driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run" ;;
+                9) driver_filename="NVIDIA-Linux-x86_64-550.163.02-vgpu-kvm.run" ;;
+                10) driver_filename="NVIDIA-Linux-x86_64-550.163.10-vgpu-kvm.run" ;;
+                11) driver_filename="NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run" ;;
+                12) driver_filename="NVIDIA-Linux-x86_64-550.127.06-vgpu-kvm.run" ;;
+                13) driver_filename="NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm.run" ;;
+                14) driver_filename="NVIDIA-Linux-x86_64-550.54.16-vgpu-kvm.run" ;;
+                15) driver_filename="NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm.run" ;;
+                16) driver_filename="NVIDIA-Linux-x86_64-535.261.04-vgpu-kvm.run" ;;
+                17) driver_filename="NVIDIA-Linux-x86_64-535.247.02-vgpu-kvm.run" ;;
+                18) driver_filename="NVIDIA-Linux-x86_64-535.230.02-vgpu-kvm.run" ;;
+                19) driver_filename="NVIDIA-Linux-x86_64-535.216.01-vgpu-kvm.run" ;;
+                20) driver_filename="NVIDIA-Linux-x86_64-535.183.04-vgpu-kvm.run" ;;
                 21) driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run" ;;
-                22) driver_filename="NVIDIA-Linux-x86_64-535.129.03-vgpu-kvm.run" ;;
-                23) driver_filename="NVIDIA-Linux-x86_64-535.104.06-vgpu-kvm.run" ;;
-                24) driver_filename="NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run" ;;
+                22) driver_filename="NVIDIA-Linux-x86_64-535.161.05-vgpu-kvm.run" ;;
+                23) driver_filename="NVIDIA-Linux-x86_64-535.129.03-vgpu-kvm.run" ;;
+                24) driver_filename="NVIDIA-Linux-x86_64-535.104.06-vgpu-kvm.run" ;;
+                25) driver_filename="NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm.run" ;;
                 *) 
                     echo "Invalid choice. Please enter a valid option."
                     exit 1
@@ -3285,6 +3294,10 @@ case $STEP in
             fi
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-550.163.02-vgpu-kvm.run" ]; then
             echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 550.163.02"
+            echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.6/NVIDIA-Linux-x86_64-550.163.01-grid.run"
+            echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.6/553.74_grid_win10_win11_server2022_dch_64bit_international.exe"
+        elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-550.163.10-vgpu-kvm.run" ]; then
+            echo -e "${GREEN}[+]${NC} In your VM download Nvidia guest driver for version: 550.163.10 (hotfix)"
             echo -e "${YELLOW}[-]${NC} Linux: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.6/NVIDIA-Linux-x86_64-550.163.01-grid.run"
             echo -e "${YELLOW}[-]${NC} Windows: https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU17.6/553.74_grid_win10_win11_server2022_dch_64bit_international.exe"
         elif [ "$driver_filename" == "NVIDIA-Linux-x86_64-550.144.02-vgpu-kvm.run" ]; then
