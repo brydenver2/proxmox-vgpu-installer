@@ -1052,6 +1052,136 @@ EOF
     fi
 }
 
+# Function to SCP license files to a remote host
+scp_license_files() {
+    echo ""
+    echo -e "${BLUE}SCP License Files to Remote Host${NC}"
+    echo -e "${BLUE}=================================${NC}"
+    echo ""
+    
+    local license_dir="$VGPU_DIR/licenses"
+    
+    # Check if license directory exists and has files
+    if [ ! -d "$license_dir" ]; then
+        echo -e "${RED}[!]${NC} License directory not found: $license_dir"
+        echo -e "${YELLOW}[-]${NC} Please run 'License vGPU' option first to generate license files"
+        return 1
+    fi
+    
+    # Check for license files and store the list
+    local license_files
+    license_files=$(find "$license_dir" -maxdepth 1 -type f -name "license_*.sh" -o -name "license_*.ps1" 2>/dev/null)
+    if [ -z "$license_files" ]; then
+        echo -e "${RED}[!]${NC} No license files found in: $license_dir"
+        echo -e "${YELLOW}[-]${NC} Please run 'License vGPU' option first to generate license files"
+        return 1
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Found license files in: $license_dir"
+    echo -e "${YELLOW}[-]${NC} Available files:"
+    echo "$license_files" | xargs -I{} basename {} | sed 's/^/  /'
+    echo ""
+    
+    # Get remote host with basic validation
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote hostname or IP address: ")" remote_host
+    
+    if [ -z "$remote_host" ]; then
+        echo -e "${RED}[!]${NC} Remote host cannot be empty"
+        return 1
+    fi
+    
+    # Validate hostname/IP: allow alphanumeric, dots, hyphens, but require proper format
+    if ! [[ "$remote_host" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$ ]]; then
+        echo -e "${RED}[!]${NC} Invalid hostname or IP address format"
+        echo -e "${YELLOW}[-]${NC} Must start and end with alphanumeric characters"
+        return 1
+    fi
+    
+    # Get remote user (default to root)
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote username [root]: ")" remote_user
+    remote_user=${remote_user:-root}
+    
+    # Validate username: allow lowercase letters, digits, underscore, hyphen, dot
+    if ! [[ "$remote_user" =~ ^[a-z_][a-z0-9_.\-]*$ ]]; then
+        echo -e "${RED}[!]${NC} Invalid username format"
+        echo -e "${YELLOW}[-]${NC} Username must start with lowercase letter or underscore"
+        return 1
+    fi
+    
+    # Get remote destination path
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote destination path [/tmp]: ")" remote_path
+    remote_path=${remote_path:-/tmp}
+    
+    # Validate path: must be absolute and contain only safe characters
+    if ! [[ "$remote_path" =~ ^/[a-zA-Z0-9/_.\-]*$ ]]; then
+        echo -e "${RED}[!]${NC} Invalid path format"
+        echo -e "${YELLOW}[-]${NC} Path must be absolute and contain only alphanumeric characters, slashes, dots, underscores, and hyphens"
+        return 1
+    fi
+    
+    # Get optional SSH port
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter SSH port [22]: ")" ssh_port
+    ssh_port=${ssh_port:-22}
+    
+    # Validate port number
+    if ! [[ "$ssh_port" =~ ^[0-9]+$ ]] || [ "$ssh_port" -lt 1 ] || [ "$ssh_port" -gt 65535 ]; then
+        echo -e "${RED}[!]${NC} Invalid port number. Must be between 1 and 65535"
+        return 1
+    fi
+    
+    echo ""
+    echo -e "${GREEN}[+]${NC} Transfer Configuration:"
+    echo -e "${YELLOW}[-]${NC} Source: $license_dir"
+    echo -e "${YELLOW}[-]${NC} Destination: ${remote_user}@${remote_host}:${remote_path}"
+    echo -e "${YELLOW}[-]${NC} SSH Port: $ssh_port"
+    echo ""
+    
+    read -p "$(echo -e "${BLUE}[?]${NC} Proceed with file transfer? (y/n): ")" confirm
+    
+    if [ "$confirm" = "y" ]; then
+        echo -e "${GREEN}[+]${NC} Transferring license files..."
+        
+        # Transfer each file individually to avoid glob issues
+        local transfer_failed=false
+        local scp_output
+        
+        for file in $license_files; do
+            if [ -f "$file" ]; then
+                scp_output=$(scp -P "$ssh_port" "$file" "${remote_user}@${remote_host}:${remote_path}/" 2>&1)
+                if [ $? -ne 0 ]; then
+                    transfer_failed=true
+                    echo -e "${RED}[!]${NC} Failed to transfer: $(basename "$file")"
+                    if [ -n "$scp_output" ]; then
+                        echo -e "${RED}[!]${NC} Error: $scp_output"
+                    fi
+                else
+                    echo -e "${GREEN}[+]${NC} Transferred: $(basename "$file")"
+                fi
+            fi
+        done
+        
+        if [ "$transfer_failed" = false ]; then
+            echo ""
+            echo -e "${GREEN}[+]${NC} All license files transferred successfully!"
+            echo -e "${YELLOW}[-]${NC} Files are now available at: ${remote_host}:${remote_path}"
+            echo ""
+            echo -e "${YELLOW}[-]${NC} On the remote host, run the appropriate script:"
+            echo -e "${YELLOW}[-]${NC} • Linux: bash ${remote_path}/license_linux.sh"
+            echo -e "${YELLOW}[-]${NC} • Windows: Copy to Windows and run: powershell -ExecutionPolicy Bypass -File license_windows.ps1"
+        else
+            echo ""
+            echo -e "${RED}[!]${NC} Some files failed to transfer"
+            echo -e "${YELLOW}[-]${NC} Please check:"
+            echo -e "${YELLOW}[-]${NC} • SSH connectivity to ${remote_host}:${ssh_port}"
+            echo -e "${YELLOW}[-]${NC} • Remote user credentials for ${remote_user}"
+            echo -e "${YELLOW}[-]${NC} • Remote path permissions for ${remote_path}"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}[-]${NC} File transfer cancelled"
+    fi
+}
+
 # Function to configure Pascal VM with ROM spoofing
 configure_pascal_vm() {
     echo ""
@@ -1232,7 +1362,7 @@ configure_existing_vm() {
         fi
         
         # Apply the configuration
-        if qm set "$vm_id" "$hostpci_param=$hostpci_config"; then
+        if qm set "$vm_id" --"$hostpci_param" "$hostpci_config"; then
             echo -e "${GREEN}[+]${NC} Successfully configured VM $vm_id with Pascal ROM spoofing"
             echo -e "${GREEN}[+]${NC} Added $hostpci_param: $hostpci_config"
             
@@ -1703,7 +1833,8 @@ case $STEP in
     echo "5) License vGPU"
     echo "6) Create vGPU overrides (PoloLoco guide)"
     echo "7) Configure Pascal VM (ROM spoofing)"
-    echo "8) Exit"
+    echo "8) SCP license files to remote host"
+    echo "9) Exit"
     echo ""
     read -p "Enter your choice: " choice
 
@@ -2665,14 +2796,23 @@ case $STEP in
             
             exit 0
             ;;
-        8)
+        8)  
+            echo ""
+            echo "This will help you transfer license files to a remote host"         
+            echo ""
+            
+            scp_license_files
+            
+            exit 0
+            ;;
+        9)
             echo ""
             echo "Exiting script."
             exit 0
             ;;
         *)
             echo ""
-            echo "Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7 or 8."
+            echo "Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7, 8 or 9."
             echo ""
             ;;
         esac
