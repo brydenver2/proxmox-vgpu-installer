@@ -319,38 +319,40 @@ prompt_for_driver_url() {
     local driver_filename="$1"
     local driver_version="$2"
     
-    echo ""
-    echo -e "${YELLOW}[!]${NC} Driver Download Required"
-    echo -e "${YELLOW}[-]${NC} Driver file: $driver_filename"
-    echo -e "${YELLOW}[-]${NC} Driver version: $driver_version"
-    echo ""
-    echo -e "${BLUE}Please provide a download URL for the NVIDIA vGPU driver.${NC}"
-    echo ""
-    echo -e "${YELLOW}Official Sources:${NC}"
-    echo -e "• NVIDIA Licensing Portal: https://nvid.nvidia.com/dashboard/"
-    echo -e "• NVIDIA vGPU Software: https://www.nvidia.com/en-us/drivers/vgpu-software-driver/"
-    echo ""
-    echo -e "${YELLOW}Community Sources (use at your own discretion):${NC}"
-    echo -e "• PoloLoco vGPU Discord: https://discord.gg/5rQsSV3Byq"
-    echo -e "• vGPU Unlocking Community resources"
-    echo ""
-    echo -e "${RED}Note:${NC} This script no longer provides hardcoded download links."
-    echo -e "${RED}Note:${NC} You must obtain drivers from official or trusted sources."
-    echo ""
+    # All informational output goes to stderr so only the URL is captured by command substitution
+    echo "" >&2
+    echo -e "${YELLOW}[!]${NC} Driver Download Required" >&2
+    echo -e "${YELLOW}[-]${NC} Driver file: $driver_filename" >&2
+    echo -e "${YELLOW}[-]${NC} Driver version: $driver_version" >&2
+    echo "" >&2
+    echo -e "${BLUE}Please provide a download URL for the NVIDIA vGPU driver.${NC}" >&2
+    echo "" >&2
+    echo -e "${YELLOW}Official Sources:${NC}" >&2
+    echo -e "• NVIDIA Licensing Portal: https://nvid.nvidia.com/dashboard/" >&2
+    echo -e "• NVIDIA vGPU Software: https://www.nvidia.com/en-us/drivers/vgpu-software-driver/" >&2
+    echo "" >&2
+    echo -e "${YELLOW}Community Sources (use at your own discretion):${NC}" >&2
+    echo -e "• PoloLoco vGPU Discord: https://discord.gg/5rQsSV3Byq" >&2
+    echo -e "• vGPU Unlocking Community resources" >&2
+    echo "" >&2
+    echo -e "${RED}Note:${NC} This script no longer provides hardcoded download links." >&2
+    echo -e "${RED}Note:${NC} You must obtain drivers from official or trusted sources." >&2
+    echo "" >&2
     
     local url=""
     while [ -z "$url" ]; do
         read -p "$(echo -e "${BLUE}[?]${NC} Enter download URL for $driver_filename: ")" url
         if [ -z "$url" ]; then
-            echo -e "${RED}[!]${NC} URL cannot be empty. Please provide a valid download URL."
+            echo -e "${RED}[!]${NC} URL cannot be empty. Please provide a valid download URL." >&2
         elif [[ ! "$url" =~ ^https?:// ]]; then
-            echo -e "${RED}[!]${NC} Please provide a valid HTTP/HTTPS URL."
+            echo -e "${RED}[!]${NC} Please provide a valid HTTP/HTTPS URL." >&2
             url=""
         fi
     done
     
-    echo ""
-    echo -e "${GREEN}[+]${NC} Using URL: $url"
+    echo "" >&2
+    echo -e "${GREEN}[+]${NC} Using URL: $url" >&2
+    # Only output the URL to stdout (this is what gets captured by command substitution)
     echo "$url"
 }
 
