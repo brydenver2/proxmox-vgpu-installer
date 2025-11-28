@@ -1473,13 +1473,12 @@ create_vgpu_unlock_config() {
     local config_file="/etc/vgpu_unlock/config.toml"
     local vgpu_support="${1:-Unknown}"  # Accept VGPU_SUPPORT as parameter, default to Unknown
     local unlock_setting="true"         # Default to unlock = true
-    local is_native=false
     
     # Check for Tesla P4 cards (device ID 1bb3) - special case
     local tesla_p4_detected=false
     if lspci -nn | grep -i 'NVIDIA Corporation' | grep -q '1bb3'; then
         tesla_p4_detected=true
-        echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected - creating specialized config.toml"
+        echo -e "${GREEN}[+]${NC} Tesla P4 GPU detected"
     fi
     
     # Determine unlock setting based on GPU support type
@@ -1487,7 +1486,6 @@ create_vgpu_unlock_config() {
     # Consumer cards (GTX, RTX, Quadro without native support) should have unlock = true
     if [ "$vgpu_support" = "Native" ]; then
         unlock_setting="false"
-        is_native=true
         echo -e "${GREEN}[+]${NC} Native vGPU GPU detected - setting unlock = false"
     elif [ "$tesla_p4_detected" = true ]; then
         # Tesla P4 is a special case - it's marked as "Yes" in DB but needs unlock = false
@@ -1501,52 +1499,15 @@ create_vgpu_unlock_config() {
     
     echo -e "${GREEN}[+]${NC} Creating vgpu_unlock configuration file"
     
-    # Create the config.toml file
-    cat > "$config_file" << 'EOF'
-# vgpu_unlock-rs configuration file
-# See: https://github.com/mbilker/vgpu_unlock-rs
-
-[logging]
-level = "INFO"
-
-[general]
-# For native vGPU cards (Tesla with native support, GRID), unlock must be set to false
-# For consumer cards (GTX, RTX, Quadro without native support), unlock must be set to true
-# See: https://github.com/mbilker/vgpu_unlock-rs
-EOF
-
-    # Add unlock setting
-    echo "unlock = $unlock_setting" >> "$config_file"
-    
-    # Add Tesla P4 specific configuration if detected
-    if [ "$tesla_p4_detected" = true ]; then
-        cat >> "$config_file" << 'EOF'
-
-# Tesla P4 specific settings
-[tesla_p4]
-# Tesla P4 can use almost any driver version but requires specific configuration
-# The driver must be patched on the host system
-driver_patching_required = true
-EOF
-        echo -e "${GREEN}[+]${NC} Tesla P4 specific configuration added (unlock = false)"
-    elif [ "$is_native" = true ]; then
-        echo -e "${GREEN}[+]${NC} Native vGPU configuration added (unlock = false)"
-    else
-        echo -e "${GREEN}[+]${NC} Consumer GPU configuration added (unlock = true)"
-    fi
+    # Create minimal config.toml file - only the unlock setting is required
+    # Extra settings can cause issues with vgpu_unlock-rs
+    echo "unlock = $unlock_setting" > "$config_file"
     
     # Set proper permissions
     chmod 644 "$config_file"
     chown root:root "$config_file" 2>/dev/null || true
     
-    echo -e "${GREEN}[+]${NC} vgpu_unlock configuration created: $config_file"
-    
-    if [ "$tesla_p4_detected" = true ]; then
-        echo -e "${YELLOW}[-]${NC} Tesla P4 detected: Driver must be patched on host system"
-        echo -e "${YELLOW}[-]${NC} Configuration set to unlock = false as required for P4 cards"
-    elif [ "$is_native" = true ]; then
-        echo -e "${YELLOW}[-]${NC} Native vGPU GPU: No unlock needed, using unlock = false"
-    fi
+    echo -e "${GREEN}[+]${NC} vgpu_unlock configuration created: $config_file (unlock = $unlock_setting)"
 }
 
 # Function to create vGPU overrides following PoloLoco's guide

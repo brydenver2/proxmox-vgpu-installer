@@ -314,20 +314,21 @@ Use the validation script for complete verification:
 If you're experiencing vGPU profile issues, check vgpu_unlock configuration:
 
 1. **Verify config.toml exists**: `ls -la /etc/vgpu_unlock/config.toml`
-2. **Check unlock setting**: `grep "unlock" /etc/vgpu_unlock/config.toml`
+2. **Check unlock setting**: `cat /etc/vgpu_unlock/config.toml`
    - Should show: `unlock = false` for native vGPU cards and Tesla P4
    - Should show: `unlock = true` for consumer cards (GTX, RTX)
+   - **Important**: The file should ONLY contain the unlock setting line, no other content
 3. **Manual fix if needed**:
    ```bash
    # Edit the configuration file
    sudo nano /etc/vgpu_unlock/config.toml
    
    # For native vGPU cards (Tesla V100, P100, M60, GRID, Tesla P4):
-   [general]
+   # The file should contain ONLY this single line:
    unlock = false
    
    # For consumer cards (GTX, RTX):
-   [general]
+   # The file should contain ONLY this single line:
    unlock = true
    ```
 4. **Regenerate configuration**: Run `./proxmox-installer.sh` to recreate config files
