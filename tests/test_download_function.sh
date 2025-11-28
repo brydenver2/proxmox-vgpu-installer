@@ -82,14 +82,16 @@ else
 fi
 
 # Check that wget -q is NOT used in download_driver_from_url function (hides error output)
-if grep -A 30 "download_driver_from_url()" "$MAIN_SCRIPT" | grep -q "wget -q"; then
+# Use sed to extract the function body and check for wget -q
+if sed -n '/^download_driver_from_url()/,/^[a-zA-Z_][a-zA-Z0-9_]*().*{/p' "$MAIN_SCRIPT" | grep -q "wget -q"; then
     echo -e "${RED}[FAIL]${NC} wget still uses -q flag in download function (hides errors)"
 else
     echo -e "${GREEN}[PASS]${NC} wget no longer uses -q flag in download function (errors are now visible)"
 fi
 
 # Check that curl --silent is NOT used in download function
-if grep -A 20 "download_driver_from_url" "$MAIN_SCRIPT" | grep -q "curl.*--silent"; then
+# Use sed to extract the function body and check for curl --silent
+if sed -n '/^download_driver_from_url()/,/^[a-zA-Z_][a-zA-Z0-9_]*().*{/p' "$MAIN_SCRIPT" | grep -q "curl.*--silent"; then
     echo -e "${RED}[FAIL]${NC} curl still uses --silent flag (hides errors)"
 else
     echo -e "${GREEN}[PASS]${NC} curl no longer uses --silent flag in download function"
@@ -130,19 +132,13 @@ echo -e "${YELLOW}Test 4: Functional download test (using httpbin.org)${NC}"
 TEST_DIR=$(mktemp -d)
 cd "$TEST_DIR" || exit 1
 
-# Source color codes for download function
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
 # Test wget download
 echo -e "${YELLOW}[-]${NC} Testing wget download..."
 TEST_URL="https://httpbin.org/bytes/1024"
 TEST_FILE="test_wget.bin"
 
 if command -v wget >/dev/null 2>&1; then
+    # Use shorter read-timeout for test (1KB file doesn't need 300 seconds)
     if wget --progress=bar:force --tries=3 --connect-timeout=30 --read-timeout=60 "$TEST_URL" -O "$TEST_FILE" 2>&1; then
         if [ -f "$TEST_FILE" ] && [ -s "$TEST_FILE" ]; then
             echo -e "${GREEN}[PASS]${NC} wget successfully downloaded test file"
