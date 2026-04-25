@@ -1131,129 +1131,166 @@ EOF
     fi
 }
 
-# Function to SCP license files to a remote host
+# Function to copy license files to a VM via QEMU Guest Agent (qm guest exec)
 scp_license_files() {
     echo ""
-    echo -e "${BLUE}SCP License Files to Remote Host${NC}"
-    echo -e "${BLUE}=================================${NC}"
+    echo -e "${BLUE}Copy License Files to VM (via QEMU Guest Agent)${NC}"
+    echo -e "${BLUE}=================================================${NC}"
     echo ""
-    
+
     local license_dir="$VGPU_DIR/licenses"
-    
+
     # Check if license directory exists and has files
     if [ ! -d "$license_dir" ]; then
         echo -e "${RED}[!]${NC} License directory not found: $license_dir"
         echo -e "${YELLOW}[-]${NC} Please run 'License vGPU' option first to generate license files"
         return 1
     fi
-    
+
     # Check for license files and store the list
     local license_files
-    license_files=$(find "$license_dir" -maxdepth 1 -type f -name "license_*.sh" -o -name "license_*.ps1" 2>/dev/null)
+    license_files=$(find "$license_dir" -maxdepth 1 -type f \( -name "license_*.sh" -o -name "license_*.ps1" \) 2>/dev/null)
     if [ -z "$license_files" ]; then
         echo -e "${RED}[!]${NC} No license files found in: $license_dir"
         echo -e "${YELLOW}[-]${NC} Please run 'License vGPU' option first to generate license files"
         return 1
     fi
-    
+
     echo -e "${GREEN}[+]${NC} Found license files in: $license_dir"
     echo -e "${YELLOW}[-]${NC} Available files:"
     echo "$license_files" | xargs -I{} basename {} | sed 's/^/  /'
     echo ""
-    
-    # Get remote host with basic validation
-    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote hostname or IP address: ")" remote_host
-    
-    if [ -z "$remote_host" ]; then
-        echo -e "${RED}[!]${NC} Remote host cannot be empty"
+
+    # Must be on a Proxmox host with qm
+    if ! command -v qm >/dev/null 2>&1; then
+        echo -e "${RED}[!]${NC} 'qm' command not found - this option must be run on the Proxmox host"
         return 1
     fi
-    
-    # Validate hostname/IP: allow alphanumeric, dots, hyphens, but require proper format
-    if ! [[ "$remote_host" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$ ]]; then
-        echo -e "${RED}[!]${NC} Invalid hostname or IP address format"
-        echo -e "${YELLOW}[-]${NC} Must start and end with alphanumeric characters"
+
+    # Show running VMs to help the user pick
+    echo -e "${YELLOW}[-]${NC} Running VMs on this host:"
+    qm list 2>/dev/null | awk 'NR==1 || $3 == "running"' | sed 's/^/  /'
+    echo ""
+
+    # Get target VM ID
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter target VM ID: ")" vmid
+
+    if [ -z "$vmid" ] || ! [[ "$vmid" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}[!]${NC} Invalid VM ID - must be numeric"
         return 1
     fi
-    
-    # Get remote user (default to root)
-    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote username [root]: ")" remote_user
-    remote_user=${remote_user:-root}
-    
-    # Validate username: allow lowercase letters, digits, underscore, hyphen, dot
+
+    # Verify VM exists
+    if ! qm config "$vmid" >/dev/null 2>&1; then
+        echo -e "${RED}[!]${NC} VM $vmid not found on this host"
+        return 1
+    fi
+
+    # Verify guest agent is enabled in config
+    if ! qm config "$vmid" 2>/dev/null | grep -qE "^agent:[[:space:]]*1"; then
+        echo -e "${RED}[!]${NC} VM $vmid does not have QEMU guest agent enabled (agent: 1)"
+        echo -e "${YELLOW}[-]${NC} Edit /etc/pve/qemu-server/${vmid}.conf and add: agent: 1"
+        echo -e "${YELLOW}[-]${NC} Then ensure 'qemu-guest-agent' is installed and running inside the VM"
+        return 1
+    fi
+
+    # Verify VM is running and guest agent responds
+    if ! qm status "$vmid" 2>/dev/null | grep -q "status: running"; then
+        echo -e "${RED}[!]${NC} VM $vmid is not running (start it with: qm start $vmid)"
+        return 1
+    fi
+
+    if ! qm guest cmd "$vmid" ping >/dev/null 2>&1; then
+        echo -e "${RED}[!]${NC} Guest agent on VM $vmid is not responding"
+        echo -e "${YELLOW}[-]${NC} Inside the VM: 'apt install qemu-guest-agent && systemctl enable --now qemu-guest-agent'"
+        return 1
+    fi
+
+    # Get remote user (default to serveradmin which is the common cloud-init user)
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote username [serveradmin]: ")" remote_user
+    remote_user=${remote_user:-serveradmin}
+
+    # Validate username
     if ! [[ "$remote_user" =~ ^[a-z_][a-z0-9_.\-]*$ ]]; then
         echo -e "${RED}[!]${NC} Invalid username format"
         echo -e "${YELLOW}[-]${NC} Username must start with lowercase letter or underscore"
         return 1
     fi
-    
+
+    # Determine sensible default destination based on user
+    local default_path
+    if [ "$remote_user" = "root" ]; then
+        default_path="/root"
+    else
+        default_path="/home/$remote_user"
+    fi
+
     # Get remote destination path
-    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote destination path [/tmp]: ")" remote_path
-    remote_path=${remote_path:-/tmp}
-    
+    read -p "$(echo -e "${BLUE}[?]${NC} Enter remote destination path [${default_path}]: ")" remote_path
+    remote_path=${remote_path:-$default_path}
+
     # Validate path: must be absolute and contain only safe characters
     if ! [[ "$remote_path" =~ ^/[a-zA-Z0-9/_.\-]*$ ]]; then
         echo -e "${RED}[!]${NC} Invalid path format"
         echo -e "${YELLOW}[-]${NC} Path must be absolute and contain only alphanumeric characters, slashes, dots, underscores, and hyphens"
         return 1
     fi
-    
-    # Get optional SSH port
-    read -p "$(echo -e "${BLUE}[?]${NC} Enter SSH port [22]: ")" ssh_port
-    ssh_port=${ssh_port:-22}
-    
-    # Validate port number
-    if ! [[ "$ssh_port" =~ ^[0-9]+$ ]] || [ "$ssh_port" -lt 1 ] || [ "$ssh_port" -gt 65535 ]; then
-        echo -e "${RED}[!]${NC} Invalid port number. Must be between 1 and 65535"
-        return 1
-    fi
-    
+
     echo ""
     echo -e "${GREEN}[+]${NC} Transfer Configuration:"
-    echo -e "${YELLOW}[-]${NC} Source: $license_dir"
-    echo -e "${YELLOW}[-]${NC} Destination: ${remote_user}@${remote_host}:${remote_path}"
-    echo -e "${YELLOW}[-]${NC} SSH Port: $ssh_port"
+    echo -e "${YELLOW}[-]${NC} Source:      $license_dir"
+    echo -e "${YELLOW}[-]${NC} Target VM:   $vmid"
+    echo -e "${YELLOW}[-]${NC} Destination: ${remote_user}@VM${vmid}:${remote_path}"
+    echo -e "${YELLOW}[-]${NC} Method:      QEMU Guest Agent (qm guest exec)"
     echo ""
-    
+
     read -p "$(echo -e "${BLUE}[?]${NC} Proceed with file transfer? (y/n): ")" confirm
-    
+
     if [ "$confirm" = "y" ]; then
-        echo -e "${GREEN}[+]${NC} Transferring license files..."
-        
-        # Transfer each file individually to avoid glob issues
+        echo -e "${GREEN}[+]${NC} Transferring license files via guest agent..."
+
+        # Best-effort: ensure destination directory exists inside the VM
+        qm guest exec "$vmid" --timeout 15 -- /bin/sh -c "mkdir -p '$remote_path'" >/dev/null 2>&1
+
         local transfer_failed=false
-        local scp_output
-        
+        local guest_output
+
         for file in $license_files; do
             if [ -f "$file" ]; then
-                scp_output=$(scp -P "$ssh_port" "$file" "${remote_user}@${remote_host}:${remote_path}/" 2>&1)
-                if [ $? -ne 0 ]; then
-                    transfer_failed=true
-                    echo -e "${RED}[!]${NC} Failed to transfer: $(basename "$file")"
-                    if [ -n "$scp_output" ]; then
-                        echo -e "${RED}[!]${NC} Error: $scp_output"
-                    fi
+                local fname b64
+                fname=$(basename "$file")
+                b64=$(base64 -w0 "$file")
+
+                # Decode and write inside the VM, then fix ownership/perms
+                guest_output=$(qm guest exec "$vmid" --timeout 30 -- /bin/sh -c "printf %s '$b64' | base64 -d > '${remote_path}/${fname}' && chown ${remote_user}:${remote_user} '${remote_path}/${fname}' 2>/dev/null; chmod 755 '${remote_path}/${fname}' && echo OK" 2>&1)
+
+                if echo "$guest_output" | grep -q '"out-data".*"OK'; then
+                    echo -e "${GREEN}[+]${NC} Transferred: $fname"
                 else
-                    echo -e "${GREEN}[+]${NC} Transferred: $(basename "$file")"
+                    transfer_failed=true
+                    echo -e "${RED}[!]${NC} Failed to transfer: $fname"
+                    if [ -n "$guest_output" ]; then
+                        echo -e "${RED}[!]${NC} Guest agent response: $guest_output"
+                    fi
                 fi
             fi
         done
-        
+
         if [ "$transfer_failed" = false ]; then
             echo ""
             echo -e "${GREEN}[+]${NC} All license files transferred successfully!"
-            echo -e "${YELLOW}[-]${NC} Files are now available at: ${remote_host}:${remote_path}"
+            echo -e "${YELLOW}[-]${NC} Files are now available at: VM${vmid}:${remote_path}"
             echo ""
-            echo -e "${YELLOW}[-]${NC} On the remote host, run the appropriate script:"
-            echo -e "${YELLOW}[-]${NC} • Linux: bash ${remote_path}/license_linux.sh"
-            echo -e "${YELLOW}[-]${NC} • Windows: Copy to Windows and run: powershell -ExecutionPolicy Bypass -File license_windows.ps1"
+            echo -e "${YELLOW}[-]${NC} On the VM, run the appropriate script (root privileges required):"
+            echo -e "${YELLOW}[-]${NC} • Linux:   sudo bash ${remote_path}/license_linux.sh"
+            echo -e "${YELLOW}[-]${NC} • Windows: powershell -ExecutionPolicy Bypass -File license_windows.ps1"
         else
             echo ""
             echo -e "${RED}[!]${NC} Some files failed to transfer"
             echo -e "${YELLOW}[-]${NC} Please check:"
-            echo -e "${YELLOW}[-]${NC} • SSH connectivity to ${remote_host}:${ssh_port}"
-            echo -e "${YELLOW}[-]${NC} • Remote user credentials for ${remote_user}"
-            echo -e "${YELLOW}[-]${NC} • Remote path permissions for ${remote_path}"
+            echo -e "${YELLOW}[-]${NC} • VM $vmid is running (qm status $vmid)"
+            echo -e "${YELLOW}[-]${NC} • qemu-guest-agent is installed and running inside the VM"
+            echo -e "${YELLOW}[-]${NC} • Destination path '${remote_path}' is writable inside the VM"
             return 1
         fi
     else
@@ -1912,7 +1949,7 @@ case $STEP in
     echo "5) License vGPU"
     echo "6) Create vGPU overrides (PoloLoco guide)"
     echo "7) Configure Pascal VM (ROM spoofing)"
-    echo "8) SCP license files to remote host"
+    echo "8) Copy license files to VM (via QEMU Guest Agent)"
     echo "9) Exit"
     echo ""
     read -p "Enter your choice: " choice
@@ -2877,7 +2914,7 @@ case $STEP in
             ;;
         8)  
             echo ""
-            echo "This will help you transfer license files to a remote host"         
+            echo "This will help you transfer license files to a VM via QEMU Guest Agent"         
             echo ""
             
             scp_license_files
