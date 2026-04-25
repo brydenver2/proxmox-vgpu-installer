@@ -835,30 +835,109 @@ configure_fastapi_dls() {
     echo ""
 
     if [ "$choice" = "y" ]; then
-        # Installing Docker-CE
-        run_command "Installing Docker-CE" "info" "apt install ca-certificates curl -y; \
-        curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc; \
-        chmod a+r /etc/apt/keyrings/docker.asc; \
-        echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \$(. /etc/os-release && echo \$VERSION_CODENAME) stable\" | \
-        tee /etc/apt/sources.list.d/docker.list > /dev/null; \
-        apt update; \
-        apt install docker-ce docker-compose -y"
+        # Installing Docker-CE (skip if already present) and apply Proxmox-safe defaults
+        if ! command -v docker >/dev/null 2>&1; then
+            run_command "Installing Docker-CE" "info" "mkdir -p /etc/apt/keyrings; \
+            apt install ca-certificates curl -y; \
+            curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc; \
+            chmod a+r /etc/apt/keyrings/docker.asc; \
+            echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \$(. /etc/os-release && echo \$VERSION_CODENAME) stable\" | \
+            tee /etc/apt/sources.list.d/docker.list > /dev/null; \
+            apt update; \
+            apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y"
+        else
+            echo -e "${GREEN}[+]${NC} Docker already installed, skipping install"
+        fi
+
+        # Apply Proxmox-safe Docker daemon defaults (custom subnet away from 10.x.x.x, log rotation, live-restore)
+        if [ ! -f /etc/docker/daemon.json ]; then
+            mkdir -p /etc/docker
+            cat > /etc/docker/daemon.json <<'DJSON'
+{
+  "default-address-pools": [
+    { "base": "172.30.0.0/16", "size": 24 }
+  ],
+  "bip": "172.30.0.1/24",
+  "iptables": true,
+  "ip-forward": true,
+  "userland-proxy": false,
+  "live-restore": true,
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "5" }
+}
+DJSON
+            echo -e "${GREEN}[+]${NC} Wrote /etc/docker/daemon.json"
+        fi
+
+        # Order Docker after pve-guests so vGPU mdevs are created before Docker starts
+        if [ ! -f /etc/systemd/system/docker.service.d/pve-ordering.conf ]; then
+            mkdir -p /etc/systemd/system/docker.service.d
+            cat > /etc/systemd/system/docker.service.d/pve-ordering.conf <<'PVEORDER'
+[Unit]
+After=pve-guests.service
+Wants=pve-guests.service
+PVEORDER
+        fi
+
+        # Allow Proxmox bridges (vmbr*/fwbr*) through Docker's FORWARD chain
+        if [ ! -f /etc/systemd/system/docker-pve-bridge-allow.service ]; then
+            cat > /etc/systemd/system/docker-pve-bridge-allow.service <<'PVEBRIDGE'
+[Unit]
+Description=Allow Proxmox bridges (vmbr*/fwbr*) through Docker FORWARD chain
+After=docker.service
+PartOf=docker.service
+BindsTo=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for IF in vmbr+ fwbr+; do iptables -C DOCKER-USER -i "$IF" -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER 1 -i "$IF" -j ACCEPT; iptables -C DOCKER-USER -o "$IF" -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER 1 -o "$IF" -j ACCEPT; done'
+ExecStop=/bin/bash -c 'for IF in vmbr+ fwbr+; do iptables -D DOCKER-USER -i "$IF" -j ACCEPT 2>/dev/null; iptables -D DOCKER-USER -o "$IF" -j ACCEPT 2>/dev/null; done'
+
+[Install]
+WantedBy=docker.service
+PVEBRIDGE
+            systemctl daemon-reload
+            systemctl enable docker-pve-bridge-allow.service >/dev/null 2>&1
+        fi
+        systemctl restart docker
+        systemctl start docker-pve-bridge-allow.service
 
         # Docker pull FastAPI-DLS v2.x (supports v17.x, v18.x, v19.x drivers)
+        # NOTE: Cert/key generation is idempotent - existing keys are PRESERVED so already-licensed VMs keep working.
         run_command "Docker pull FastAPI-DLS" "info" "docker pull collinwebdesigns/fastapi-dls:latest; \
         working_dir=/opt/docker/fastapi-dls/cert; \
         mkdir -p \$working_dir; \
         cd \$working_dir; \
-        openssl genrsa -out \$working_dir/instance.private.pem 2048; \
-        openssl rsa -in \$working_dir/instance.private.pem -outform PEM -pubout -out \$working_dir/instance.public.pem; \
-        echo -e '\n\n\n\n\n\n\n' | openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout \$working_dir/webserver.key -out \$working_dir/webserver.crt; \
-        docker volume create dls-db"
+        if [ ! -f \$working_dir/instance.private.pem ]; then \
+            openssl genrsa -out \$working_dir/instance.private.pem 2048; \
+            openssl rsa -in \$working_dir/instance.private.pem -outform PEM -pubout -out \$working_dir/instance.public.pem; \
+        else \
+            echo 'instance keys already exist, preserving (rotating would invalidate licensed VMs)'; \
+        fi; \
+        if [ ! -f \$working_dir/webserver.crt ] || [ ! -f \$working_dir/webserver.key ]; then \
+            echo -e '\n\n\n\n\n\n\n' | openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout \$working_dir/webserver.key -out \$working_dir/webserver.crt; \
+        else \
+            echo 'webserver cert already exists, preserving'; \
+        fi; \
+        docker volume create dls-db >/dev/null 2>&1 || true"
 
         # Get the timezone of the Proxmox server
         timezone=$(timedatectl | grep 'Time zone' | awk '{print $3}')
 
-        # Get the hostname of the Proxmox server
-        hostname=$(hostname -i)
+        # Get the IP that VMs will use to reach the licensing server.
+        # `hostname -i` is unreliable on multi-NIC hosts (can return 127.0.1.1 or wrong NIC).
+        # Prefer the IP of the first non-loopback bridge with a routable address.
+        detected_ip=$(ip -4 -br addr show 2>/dev/null | awk '/^vmbr/ && $2=="UP" && $3 ~ /^10\.|^172\.|^192\.168\./ {split($3,a,"/"); print a[1]; exit}')
+        if [ -z "$detected_ip" ]; then
+            detected_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        fi
+        read -p "$(echo -e "${BLUE}[?]${NC} DLS server IP/hostname VMs will use [${detected_ip}]: ")" hostname
+        hostname=${hostname:-$detected_ip}
+        if [ -z "$hostname" ] || [ "$hostname" = "127.0.0.1" ] || [ "$hostname" = "127.0.1.1" ]; then
+            echo -e "${RED}[!]${NC} Refusing to use loopback/empty IP for DLS_URL - aborting licensing setup"
+            return 1
+        fi
 
         fastapi_dir=~/fastapi-dls
         mkdir -p $fastapi_dir
@@ -905,8 +984,8 @@ services:
 volumes:
   dls-db:
 EOF
-        # Issue docker-compose
-        run_command "Running Docker Compose" "info" "docker-compose -f \"$fastapi_dir/docker-compose.yml\" up -d"
+        # Issue docker compose (v2 plugin)
+        run_command "Running Docker Compose" "info" "docker compose -f \"$fastapi_dir/docker-compose.yml\" up -d"
 
         # Create directory where license script (Windows/Linux are stored)
         mkdir -p $VGPU_DIR/licenses
