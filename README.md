@@ -2,6 +2,13 @@
 This is a little Bash script that configures a Proxmox 7 or 8 server to use Nvidia vGPU's. 
 For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-vgpu-v3/
 
+## What's New (April 2026)
+- **Proxmox + Docker coexistence hardening** — the FastAPI-DLS install now writes a Proxmox-safe `/etc/docker/daemon.json`, orders `docker.service` after `pve-guests.service`, and installs a oneshot service that injects `ACCEPT` rules for `vmbr*`/`fwbr*` into Docker's `DOCKER-USER` chain. This prevents Docker's default `FORWARD=DROP` policy from breaking VM/LXC bridged traffic and eliminates vGPU mediated-device cleanup races on VM start/stop. See [Proxmox + Docker Coexistence](#proxmox--docker-coexistence) below.
+- **Idempotent licensing certs** — re-running the installer no longer regenerates `instance.private.pem`/`webserver.crt`, so already-licensed VMs keep working across re-runs.
+- **Robust DLS server IP detection** — `hostname -i` (which can return `127.0.1.1` on multi-NIC hosts) was replaced with a `vmbr*` RFC1918 detector that prompts before baking the IP into the JWT issuer.
+- **Modern compose plugin** — installer now uses `docker-compose-plugin` (`docker compose` v2) instead of the deprecated `docker-compose` v1 binary.
+- **License copy via QEMU Guest Agent** — menu option 8 no longer needs SSH/SCP. It uses `qm guest exec` over the QEMU guest agent (`agent: 1` + `qemu-guest-agent` in the guest), so it Just Works even when the target VM only allows publickey auth, has rotated host keys, or has SSH firewalled off.
+
 ## FastAPI-DLS Licensing Information
 - **FastAPI-DLS Version 2.x** is backwards compatible to v17.x and supports **v18.x** and **v19.x** driver releases
 - For v18.x and v19.x drivers, [gridd-unlock-patcher](https://git.collinwebdesigns.de/vgpu/gridd-unlock-patcher) is required for proper licensing functionality
@@ -255,7 +262,8 @@ Options:
 5. License vGPU
 6. **Create vGPU overrides (PoloLoco guide)** ← New in v1.3
 7. **Configure Pascal VM (ROM spoofing)** ← New in v1.3
-8. Exit
+8. **Copy license files to VM (via QEMU Guest Agent)** ← Updated April 2026
+9. Exit
 
 ### PoloLoco Guide Compliance
 This script now fully follows PoloLoco's official vGPU guide:
@@ -295,6 +303,73 @@ The installer now provides **NVIDIA vGPU 16.0 compliant multi-GPU support** with
 #### System Resource Validation
 - Warnings about power and cooling requirements for multi-GPU setups
 - Ensures users understand system requirements before deployment
+
+## Proxmox + Docker Coexistence
+
+Running Docker on a Proxmox host can interfere with VM/LXC networking and with the lifecycle of NVIDIA vGPU mediated devices. When you run option **5 (License vGPU)** and accept the licensing-server setup, the installer applies the following safeguards automatically (idempotently — none are clobbered if already present):
+
+### `/etc/docker/daemon.json`
+```json
+{
+  "default-address-pools": [
+    { "base": "172.30.0.0/16", "size": 24 }
+  ],
+  "bip": "172.30.0.1/24",
+  "iptables": true,
+  "ip-forward": true,
+  "userland-proxy": false,
+  "live-restore": true,
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "5" }
+}
+```
+Moves Docker's bridge subnet to `172.30.0.0/16` so it can't collide with common Proxmox `10.x.x.x` / `192.168.x.x` networks, enables log rotation, and turns on `live-restore` so containers survive a `dockerd` restart.
+
+### `/etc/systemd/system/docker.service.d/pve-ordering.conf`
+```ini
+[Unit]
+After=pve-guests.service
+Wants=pve-guests.service
+```
+Ensures `docker.service` starts **after** `pve-guests.service` on boot — vGPU mediated devices are created for VMs first — and stops **before** `pve-guests.service` on shutdown, eliminating the mdev cleanup race that previously required manually masking Docker before starting VMs.
+
+### `/etc/systemd/system/docker-pve-bridge-allow.service`
+A oneshot unit `BindsTo=docker.service` that, on every Docker start, idempotently injects:
+```
+iptables -I DOCKER-USER 1 -i vmbr+ -j ACCEPT
+iptables -I DOCKER-USER 1 -o vmbr+ -j ACCEPT
+iptables -I DOCKER-USER 1 -i fwbr+ -j ACCEPT
+iptables -I DOCKER-USER 1 -o fwbr+ -j ACCEPT
+```
+Without these, Docker's default `FORWARD DROP` policy combined with `bridge-nf-call-iptables=1` (the Proxmox default) can silently drop bridged VM↔VM traffic on `vmbr*` and LXC `fwbr*` interfaces. The `ExecStop=` clause cleans the rules back up on Docker stop.
+
+### Quick sanity checks
+```bash
+docker ps                                           # DLS container should be (healthy)
+curl -sk https://<host-vmbr-ip>:8443/-/health        # {"status":"up"}
+iptables -L DOCKER-USER -n                           # vmbr+/fwbr+ ACCEPT rules
+systemctl status docker docker-pve-bridge-allow      # both active
+```
+
+## License File Transfer (Option 8)
+
+Menu option 8 copies the generated `licenses/license_linux.sh` and `licenses/license_windows.ps1` to a Proxmox VM **via the QEMU Guest Agent** instead of SSH/SCP. Requirements on the target VM:
+
+- VM config has `agent: 1` (in `/etc/pve/qemu-server/<vmid>.conf`)
+- `qemu-guest-agent` is installed and running inside the VM:
+  ```bash
+  apt install -y qemu-guest-agent
+  systemctl enable --now qemu-guest-agent
+  ```
+
+The installer prompts for a VM ID (and lists running VMs to help you pick), then a remote username (default `serveradmin`) and destination path (defaults to `/home/<user>` or `/root`). File contents are base64-encoded, decoded inside the VM, then `chown`'d to the chosen user with `chmod 755`.
+
+After transfer, run inside the VM:
+```bash
+sudo bash /home/serveradmin/license_linux.sh    # Linux clients
+# or
+powershell -ExecutionPolicy Bypass -File license_windows.ps1   # Windows clients
+```
 
 ## 🚀 Contributing
 All Credit belong to wvthoog for creating the V1.1 script
