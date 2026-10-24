@@ -14,15 +14,32 @@ PVE 9 changes that matter to this installer:
 |---|---|---|
 | Debian base | 12 bookworm | 13 trixie |
 | Kernel | 6.8 | 6.14 (9.0) / 6.17 (9.1) / 7.0 (9.2) |
-| Ceph release | quincy | tentacle |
+| Ceph release | quincy / reef | squid (19.2) |
 | Kernel headers pkg | `proxmox-headers-<ver>` | `proxmox-default-headers` |
 
 The installer detects PVE 9 automatically and:
-- points APT at the **trixie** PVE repo and the **ceph-tentacle** repo,
+- points APT at the **trixie** PVE repo and the **ceph-squid** repo,
+- rewrites the existing **no-subscription** PVE and Ceph repo lines (not just the
+  enterprise ones) so no stale bookworm repo line survives to pull packages built
+  for the wrong Debian release,
 - installs `proxmox-default-headers` instead of `proxmox-kernel-6.5`
   (6.5 packages do not exist in the trixie repo — installing them would abort the
   whole apt transaction),
 - refuses driver versions that cannot build against a 6.14+ kernel.
+
+### Ceph on PVE 9 — use squid, not tentacle
+
+`ceph-squid` is the only Ceph release published for **both** bookworm and trixie, so
+it is the bridge for a rolling distro upgrade of an existing Ceph cluster. `ceph-reef`
+and `ceph-quincy` have no trixie build; `ceph-tentacle` has no bookworm build.
+
+That matters because a rolling upgrade leaves the cluster mixed-version for a while.
+Pointing PVE 9 at tentacle (20.2.x) from reef (18.2.x) is a major Ceph jump with no
+mixed-version continuity. Follow the documented order instead:
+
+**Reef → Squid → Tentacle**, one release at a time, per
+<https://pve.proxmox.com/wiki/Ceph_Reef_to_Squid>.
+
 
 ### Driver / kernel compatibility on PVE 9
 

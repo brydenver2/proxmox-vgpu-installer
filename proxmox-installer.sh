@@ -1992,9 +1992,13 @@ case $STEP in
             echo -e "${GREEN}[+]${NC} Making changes to APT for Proxmox version: ${RED}$major_version${NC}"
             case $major_version in
                 9)
-                    # PVE 9 is based on Debian 13 "trixie"
+                    # PVE 9 is based on Debian 13 "trixie".
+                    # Ceph: squid is the only Ceph release published for BOTH bookworm and
+                    # trixie, so it is the bridge for a rolling distro upgrade of an existing
+                    # Ceph cluster. tentacle is trixie-only (no bookworm build) and would
+                    # force a major Ceph jump with no mixed-version continuity.
                     proxmox_repo="deb http://download.proxmox.com/debian/pve trixie pve-no-subscription"
-                    ceph_repo="deb http://download.proxmox.com/debian/ceph-tentacle trixie no-subscription"
+                    ceph_repo="deb http://download.proxmox.com/debian/ceph-squid trixie no-subscription"
                     ;;
                 8)
                     proxmox_repo="deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription"
@@ -2014,9 +2018,30 @@ case $STEP in
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/pve bullseye pve-enterprise" "$proxmox_repo"
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/pve bookworm pve-enterprise" "$proxmox_repo"
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/pve trixie pve-enterprise" "$proxmox_repo"
+            # Also replace the non-enterprise (no-subscription) PVE line. On an existing
+            # install the active PVE repo is a plain no-subscription line pointing at the
+            # OLD Debian release (e.g. "pve bookworm pve-no-subscription"). Rewriting only
+            # the enterprise lines leaves that stale bookworm line in place, so apt keeps
+            # resolving Proxmox packages against the wrong Debian release.
+            replace_repo_lines "deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription" "$proxmox_repo"
+            replace_repo_lines "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" "$proxmox_repo"
+            replace_repo_lines "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" "$proxmox_repo"
+            replace_repo_lines "deb https://download.proxmox.com/debian/pve bullseye pve-no-subscription" "$proxmox_repo"
+            replace_repo_lines "deb https://download.proxmox.com/debian/pve bookworm pve-no-subscription" "$proxmox_repo"
+            replace_repo_lines "deb https://download.proxmox.com/debian/pve trixie pve-no-subscription" "$proxmox_repo"
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/ceph-quincy bookworm enterprise" "$ceph_repo"
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/ceph-quincy bullseye enterprise" "$ceph_repo"
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/ceph-tentacle trixie enterprise" "$ceph_repo"
+            # Also replace the non-enterprise (no-subscription) Ceph lines. On an existing
+            # cluster the active Ceph repo is a plain no-subscription line pointing at the
+            # OLD Debian release (e.g. "ceph-reef bookworm no-subscription"). Leaving it in
+            # place alongside a trixie repo makes apt pull Ceph packages built for the wrong
+            # distro, which breaks the client/monitor/OSD version match.
+            replace_repo_lines "deb http://download.proxmox.com/debian/ceph-reef bookworm no-subscription" "$ceph_repo"
+            replace_repo_lines "deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription" "$ceph_repo"
+            replace_repo_lines "deb http://download.proxmox.com/debian/ceph-squid bookworm no-subscription" "$ceph_repo"
+            replace_repo_lines "deb https://download.proxmox.com/debian/ceph-reef bookworm no-subscription" "$ceph_repo"
+            replace_repo_lines "deb https://download.proxmox.com/debian/ceph-quincy bookworm no-subscription" "$ceph_repo"
 
             # Check if Proxmox repository entry exists in /etc/apt/sources.list
             if ! grep -q "$proxmox_repo" /etc/apt/sources.list; then

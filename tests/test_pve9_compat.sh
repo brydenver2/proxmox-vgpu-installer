@@ -68,10 +68,17 @@ else
                 else
                     fail "PVE 9 did not select a trixie repo (got: $repo)"
                 fi
-                if echo "$ceph" | grep -q "ceph-tentacle"; then
-                    pass "PVE 9 selects the ceph-tentacle repo ($ceph)"
+                if echo "$ceph" | grep -q "ceph-squid"; then
+                    pass "PVE 9 selects the ceph-squid repo ($ceph)"
                 else
-                    fail "PVE 9 did not select ceph-tentacle (got: $ceph)"
+                    fail "PVE 9 did not select ceph-squid (got: $ceph)"
+                fi
+                # tentacle has no bookworm build, so it cannot bridge a rolling
+                # bookworm->trixie upgrade of an existing Ceph cluster.
+                if echo "$ceph" | grep -q "ceph-tentacle"; then
+                    fail "PVE 9 selects ceph-tentacle, which has no bookworm build (got: $ceph)"
+                else
+                    pass "PVE 9 avoids ceph-tentacle (no bookworm build to bridge from)"
                 fi
                 ;;
             8)
@@ -203,6 +210,75 @@ if [ -f "$README" ]; then
     fi
 else
     echo -e "${YELLOW}[SKIP]${NC} README.md not found"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. FUNCTIONAL: the repo rewrite must convert the real cluster's apt sources
+#    from bookworm to trixie, using the installer's actual replace_repo_lines
+# ---------------------------------------------------------------------------
+# This is the check that would have caught the real-world failure: the cluster
+# ships a plain no-subscription Ceph line for the OLD Debian release. If the
+# installer only rewrites enterprise lines, apt keeps pulling bookworm Ceph
+# packages onto a trixie host and the client/monitor/OSD versions diverge.
+TMPROOT=$(mktemp -d)
+trap 'rm -rf "$TMPROOT"' EXIT
+mkdir -p "$TMPROOT/etc/apt/sources.list.d"
+cat > "$TMPROOT/etc/apt/sources.list" <<'SRCLIST'
+deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription
+deb http://download.proxmox.com/debian/ceph-reef bookworm no-subscription
+SRCLIST
+
+# Build a driver script holding the installer's real replacement CALLS
+# (old-repo -> $ceph_repo / $proxmox_repo). The trailing "$var" argument is
+# emitted UNQUOTED so the variable expands at run time, not build time.
+{
+  echo 'proxmox_repo="deb http://download.proxmox.com/debian/pve trixie pve-no-subscription"'
+  echo 'ceph_repo="deb http://download.proxmox.com/debian/ceph-squid trixie no-subscription"'
+  # every ceph replacement line the installer performs. The trailing argument
+  # stays double-quoted exactly as in the installer, so $ceph_repo expands
+  # inside the function at run time (word-splitting a path with spaces would
+  # otherwise corrupt it).
+  grep -oE 'replace_repo_lines "[^"]+" "\$(ceph_repo|proxmox_repo)"' "$INSTALLER"
+} > "$TMPROOT/driver.sh"
+
+if [ ! -s "$TMPROOT/driver.sh" ] || ! grep -q 'replace_repo_lines' "$TMPROOT/driver.sh"; then
+    fail "could not extract the Ceph repo replacement list from the installer"
+else
+    # Run the installer's replacement calls against the simulated sources.list.
+    # The function is defined HERE (not sourced from the installer) so it can
+    # operate on the simulated tree instead of the real /etc/apt.
+    ( cd "$TMPROOT" && ROOT="$TMPROOT" bash -c '
+        replace_repo_lines() {
+            local old_repo="$1"
+            local new_repo="$2"
+            if grep -q "$old_repo" "$ROOT/etc/apt/sources.list" 2>/dev/null; then
+                sed -i "s|$old_repo|$new_repo|g" "$ROOT/etc/apt/sources.list"
+            fi
+        }
+        source '"$TMPROOT"'/driver.sh
+    ' ) 2>/dev/null
+
+    result=$(cat "$TMPROOT/etc/apt/sources.list")
+    if echo "$result" | grep -q "ceph-reef bookworm"; then
+        fail "the bookworm Ceph repo line was NOT rewritten (stale bookworm Ceph would be pulled onto trixie): $result"
+    else
+        pass "the bookworm Ceph repo line is rewritten to the trixie Ceph repo"
+    fi
+    if echo "$result" | grep -q "ceph-squid trixie"; then
+        pass "rewritten Ceph repo points at ceph-squid trixie"
+    else
+        fail "rewritten Ceph repo does not point at ceph-squid trixie: $result"
+    fi
+    if echo "$result" | grep -q "pve trixie"; then
+        pass "rewritten PVE repo points at trixie"
+    else
+        fail "rewritten PVE repo does not point at trixie: $result"
+    fi
+    if echo "$result" | grep -q "bookworm"; then
+        fail "a bookworm repo line survived the rewrite: $result"
+    else
+        pass "no bookworm repo lines survive the rewrite"
+    fi
 fi
 
 echo
