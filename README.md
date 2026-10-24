@@ -1,6 +1,71 @@
 # vGPU Proxmox Script
-This is a little Bash script that configures a Proxmox 7 or 8 server to use Nvidia vGPU's. 
+This is a little Bash script that configures a Proxmox 7, 8 or 9 server to use Nvidia vGPU's. 
 For further instructions see wvthoog's blogpost at https://wvthoog.nl/proxmox-7-vgpu-v3/
+
+## Proxmox 9 support (Debian 13 "trixie")
+
+Proxmox VE 8 went end-of-life in **August 2026** (Proxmox supports a major version
+only as long as the matching Debian version is oldstable; Debian 12 bookworm EOL was
+July 2026). PVE 9 (Debian 13 trixie) is the only supported target going forward.
+
+PVE 9 changes that matter to this installer:
+
+| | PVE 8 | PVE 9 |
+|---|---|---|
+| Debian base | 12 bookworm | 13 trixie |
+| Kernel | 6.8 | 6.14 (9.0) / 6.17 (9.1) / 7.0 (9.2) |
+| Ceph release | quincy / reef | squid (19.2) |
+| Kernel headers pkg | `proxmox-headers-<ver>` | `proxmox-default-headers` |
+
+The installer detects PVE 9 automatically and:
+- points APT at the **trixie** PVE repo and the **ceph-squid** repo,
+- rewrites the existing **no-subscription** PVE and Ceph repo lines (not just the
+  enterprise ones) so no stale bookworm repo line survives to pull packages built
+  for the wrong Debian release,
+- installs `proxmox-default-headers` instead of `proxmox-kernel-6.5`
+  (6.5 packages do not exist in the trixie repo — installing them would abort the
+  whole apt transaction),
+- refuses driver versions that cannot build against a 6.14+ kernel.
+
+### Ceph on PVE 9 — use squid, not tentacle
+
+`ceph-squid` is the only Ceph release published for **both** bookworm and trixie, so
+it is the bridge for a rolling distro upgrade of an existing Ceph cluster. `ceph-reef`
+and `ceph-quincy` have no trixie build; `ceph-tentacle` has no bookworm build.
+
+That matters because a rolling upgrade leaves the cluster mixed-version for a while.
+Pointing PVE 9 at tentacle (20.2.x) from reef (18.2.x) is a major Ceph jump with no
+mixed-version continuity. Follow the documented order instead:
+
+**Reef → Squid → Tentacle**, one release at a time, per
+<https://pve.proxmox.com/wiki/Ceph_Reef_to_Squid>.
+
+
+### Driver / kernel compatibility on PVE 9
+
+PVE 9 requires **vGPU 18.4 or newer**. The v16.x (535.x) and v17.x (550.x) driver
+branches top out at kernel 6.8 and will not build on 6.14/6.17/7.0.
+
+| PVE 9 kernel | Minimum vGPU | Driver | Gridd-unlock patch |
+|---|---|---|---|
+| 6.14 (9.0) | 18.4 | 570.172.07 | available |
+| 6.17 (9.1) | 19.4 | 580.126.08 | **not shipped by this repo** |
+| 7.0 (9.2) | 20.1 | 595.71.03 | **not shipped by this repo** |
+
+**Recommended: PVE 9.0 with vGPU 18.4 (570.172.07).** Driver 19.0 (580.65.05) also
+works on 9.0 and has a patch available. Drivers 19.1/19.2 have no patch available and
+require a natively supported GPU — which excludes the Tesla P4.
+
+### Pascal GPUs (Tesla P4 / P40) on PVE 9
+
+NVIDIA dropped Pascal support in v17.x+, so the newer drivers ship a `vgpuConfig.xml`
+with no Tesla P4 profile definitions. This installer applies PoloLoco's fix
+automatically: it replaces `/usr/share/nvidia/vgpu/vgpuConfig.xml` with the v16.4
+driver's copy, which still contains the Pascal profile definitions. See
+[docs/TESLA_P4_FIX.md](docs/TESLA_P4_FIX.md).
+
+Run `tests/test_pve9_compat.sh` to verify PVE 9 logic after any change to the
+installer.
 
 ## What's New (April 2026)
 - **Proxmox + Docker coexistence hardening** — the FastAPI-DLS install now writes a Proxmox-safe `/etc/docker/daemon.json`, orders `docker.service` after `pve-guests.service`, and installs a oneshot service that injects `ACCEPT` rules for `vmbr*`/`fwbr*` into Docker's `DOCKER-USER` chain. This prevents Docker's default `FORWARD=DROP` policy from breaking VM/LXC bridged traffic and eliminates vGPU mediated-device cleanup races on VM start/stop. See [Proxmox + Docker Coexistence](#proxmox--docker-coexistence) below.
