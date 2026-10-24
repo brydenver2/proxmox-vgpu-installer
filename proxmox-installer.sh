@@ -1991,11 +1991,18 @@ case $STEP in
             # Commands for new installation
             echo -e "${GREEN}[+]${NC} Making changes to APT for Proxmox version: ${RED}$major_version${NC}"
             case $major_version in
+                9)
+                    # PVE 9 is based on Debian 13 "trixie"
+                    proxmox_repo="deb http://download.proxmox.com/debian/pve trixie pve-no-subscription"
+                    ceph_repo="deb http://download.proxmox.com/debian/ceph-tentacle trixie no-subscription"
+                    ;;
                 8)
                     proxmox_repo="deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription"
+                    ceph_repo="deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription"
                     ;;
                 7)
                     proxmox_repo="deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription"
+                    ceph_repo="deb http://download.proxmox.com/debian/ceph-quincy bullseye no-subscription"
                     ;;
                 *)
                     echo -e "${RED}[!]${NC} Unsupported Proxmox version: ${YELLOW}$major_version${NC}"
@@ -2006,7 +2013,10 @@ case $STEP in
             # Replace repository lines
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/pve bullseye pve-enterprise" "$proxmox_repo"
             replace_repo_lines "deb https://enterprise.proxmox.com/debian/pve bookworm pve-enterprise" "$proxmox_repo"
-            replace_repo_lines "deb https://enterprise.proxmox.com/debian/ceph-quincy bookworm enterprise" "deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription"
+            replace_repo_lines "deb https://enterprise.proxmox.com/debian/pve trixie pve-enterprise" "$proxmox_repo"
+            replace_repo_lines "deb https://enterprise.proxmox.com/debian/ceph-quincy bookworm enterprise" "$ceph_repo"
+            replace_repo_lines "deb https://enterprise.proxmox.com/debian/ceph-quincy bullseye enterprise" "$ceph_repo"
+            replace_repo_lines "deb https://enterprise.proxmox.com/debian/ceph-tentacle trixie enterprise" "$ceph_repo"
 
             # Check if Proxmox repository entry exists in /etc/apt/sources.list
             if ! grep -q "$proxmox_repo" /etc/apt/sources.list; then
@@ -2055,15 +2065,26 @@ case $STEP in
             current_kernel=$(uname -r)
             current_kernel_base=$(echo $current_kernel | cut -d'-' -f1,2)
             echo -e "${GREEN}[+]${NC} Current running kernel: $current_kernel"
-            
+
             # Install both current kernel headers and 6.5 headers for compatibility
             write_log "Installing required packages for vGPU"
-            run_command "Installing packages" "info" "apt install -y git build-essential dkms proxmox-kernel-6.5 proxmox-headers-6.5 mdevctl megatools" true true
-            run_command "Installing headers for current kernel" "info" "apt install -y proxmox-headers-$current_kernel_base || apt install -y pve-headers-$current_kernel" false true
-
-            echo -e "${YELLOW}[-]${NC} Kernel 6.5 installed. Kernel pinning will be determined based on selected driver version."
-            echo -e "${YELLOW}[-]${NC} v16.x drivers (535.x series) require kernel 6.5 for stability"
-            echo -e "${YELLOW}[-]${NC} v17.x, v18.x, and v19.x drivers can use newer kernels"
+            if [ "$major_version" = "9" ]; then
+                # PVE 9 (Debian 13 trixie) ships kernel 6.14/6.17/7.0 and does NOT ship
+                # proxmox-kernel-6.5 in the trixie repo. Installing it would fail the whole
+                # apt transaction. Use proxmox-default-headers (the PVE 9 meta-package that
+                # tracks the installed kernel) instead.
+                run_command "Installing packages" "info" "apt install -y git build-essential dkms mdevctl megatools" true true
+                run_command "Installing PVE 9 default kernel headers" "info" "apt install -y proxmox-default-headers" true true
+                run_command "Installing headers for current kernel" "info" "apt install -y proxmox-headers-$current_kernel_base || apt install -y pve-headers-$current_kernel" false true
+                echo -e "${GREEN}[+]${NC} PVE 9 detected: using proxmox-default-headers (no 6.5 pinning needed)."
+                echo -e "${YELLOW}[-]${NC} v17.x, v18.x, and v19.x drivers build against the PVE 9 kernel (6.14+)."
+            else
+                run_command "Installing packages" "info" "apt install -y git build-essential dkms proxmox-kernel-6.5 proxmox-headers-6.5 mdevctl megatools" true true
+                run_command "Installing headers for current kernel" "info" "apt install -y proxmox-headers-$current_kernel_base || apt install -y pve-headers-$current_kernel" false true
+                echo -e "${YELLOW}[-]${NC} Kernel 6.5 installed. Kernel pinning will be determined based on selected driver version."
+                echo -e "${YELLOW}[-]${NC} v16.x drivers (535.x series) require kernel 6.5 for stability"
+                echo -e "${YELLOW}[-]${NC} v17.x, v18.x, and v19.x drivers can use newer kernels"
+            fi
 
             # Running NVIDIA GPU checks
             query_gpu_info() {
@@ -2787,7 +2808,13 @@ case $STEP in
             echo -e "${GREEN}[+]${NC} Downloading Nvidia vGPU drivers"
 
             # Offer to download vGPU driver versions based on Proxmox version
-            if [[ "$major_version" == "8" ]]; then
+            if [[ "$major_version" == "9" ]]; then
+                echo -e "${GREEN}[+]${NC} You are running Proxmox version $version"
+                echo -e "${GREEN}[+]${NC} PVE 9 requires vGPU 18.4+ (kernel 6.14+)"
+                echo -e "${GREEN}[+]${NC} Highly recommended that you download driver 18.4 or 19.0"
+                echo -e "${YELLOW}[-]${NC} Note: driver 19.1 and 19.2 have no gridd-unlock patch available"
+                echo -e "${YELLOW}[-]${NC} For Pascal GPUs (Tesla P4/P40) use 18.4 with the vgpuConfig.xml fix"
+            elif [[ "$major_version" == "8" ]]; then
                 echo -e "${GREEN}[+]${NC} You are running Proxmox version $version"
                 echo -e "${GREEN}[+]${NC} Highly recommended that you download driver 18.x, 17.x or 16.x"
             elif [[ "$major_version" == "7" ]]; then
@@ -3050,7 +3077,21 @@ case $STEP in
             }
 
             # Offer to download vGPU driver versions based on Proxmox version and supported driver
-            if [[ "$major_version" == "8" ]]; then
+            if [[ "$major_version" == "9" ]]; then
+                echo -e "${YELLOW}[-]${NC} You are running Proxmox version $version"
+                if contains_version "18" && contains_version "17" && contains_version "16"; then
+                    echo -e "${YELLOW}[-]${NC} Your Nvidia GPU is supported by driver versions 18.x, 17.x and 16.x"
+                    echo -e "${YELLOW}[-]${NC} On PVE 9 (kernel 6.14+) only 18.4 / 19.0 are viable (17.x and 16.x do not support 6.14+)"
+                elif contains_version "18"; then
+                    echo -e "${YELLOW}[-]${NC} Your Nvidia GPU is supported by driver version 18.x"
+                elif contains_version "17"; then
+                    echo -e "${YELLOW}[-]${NC} Your Nvidia GPU is supported by driver version 17.x"
+                    echo -e "${RED}[!]${NC} Warning: v17.x does NOT support PVE 9 kernels (6.14+). Use 18.4 or 19.0."
+                elif contains_version "16"; then
+                    echo -e "${YELLOW}[-]${NC} Your Nvidia GPU is supported by driver version 16.x"
+                    echo -e "${RED}[!]${NC} Warning: v16.x does NOT support PVE 9 kernels (6.14+). Use 18.4 or 19.0."
+                fi
+            elif [[ "$major_version" == "8" ]]; then
                 echo -e "${YELLOW}[-]${NC} You are running Proxmox version $version"
                 if contains_version "18" && contains_version "17" && contains_version "16"; then
                     echo -e "${YELLOW}[-]${NC} Your Nvidia GPU is supported by driver versions 18.x, 17.x and 16.x"
@@ -3155,7 +3196,19 @@ case $STEP in
             # v16.8+ and v17.x/v18.x drivers support newer kernels and don't require pinning
             apply_kernel_pinning() {
                 local driver_ver="$1"
-                
+
+                # On PVE 9 the 6.5 kernel packages do not exist in the trixie repo, so
+                # pinning to 6.5 is impossible and the v16.x/v17.x drivers cannot build
+                # against the 6.14+ kernel anyway. Refuse early with a clear message
+                # rather than failing deep in the DKMS build.
+                if [ "$major_version" = "9" ] && [[ ! "$driver_ver" =~ ^18\.[4-9]|^19\.0$ ]]; then
+                    echo -e "${RED}[!]${NC} Driver version $driver_ver is not compatible with PVE 9 (kernel 6.14+)."
+                    echo -e "${YELLOW}[-]${NC} PVE 9 requires vGPU 18.4 (570.172.07) or 19.0 (580.65.05)."
+                    echo -e "${YELLOW}[-]${NC} v17.x tops out at PVE 8.x / kernel 6.8; v16.x requires kernel 6.5 which does not exist in trixie."
+                    echo -e "${YELLOW}[-]${NC} Aborting driver selection - re-run and choose 18.4 or 19.0."
+                    exit 1
+                fi
+
                 # Check if driver version is v16.0 to v16.7 (requires kernel pinning)
                 if [[ "$driver_ver" =~ ^16\.[0-7]$ ]]; then
                     echo -e "${YELLOW}[-]${NC} Driver version $driver_ver (535.x early series) requires kernel 6.5 for stability"
